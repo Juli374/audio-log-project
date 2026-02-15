@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AudioLog</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+    --bg: #ffffff;
+    --bg-secondary: #f5f5f7;
+    --bg-card: #ffffff;
+    --text: #1d1d1f;
+    --text-secondary: #86868b;
+    --border: #d2d2d7;
+    --accent: #0071e3;
+    --accent-hover: #0077ed;
+    --danger: #ff3b30;
+    --danger-hover: #ff453a;
+    --shadow: rgba(0,0,0,0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #1d1d1f;
+        --bg-secondary: #2c2c2e;
+        --bg-card: #2c2c2e;
+        --text: #f5f5f7;
+        --text-secondary: #86868b;
+        --border: #424245;
+        --accent: #0a84ff;
+        --accent-hover: #409cff;
+        --danger: #ff453a;
+        --danger-hover: #ff6961;
+        --shadow: rgba(0,0,0,0.3);
+    }
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    overflow-x: hidden;
+}
+
+/* Header */
+.header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 20px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
+
+.header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+}
+
+.tabs {
+    display: flex;
+    gap: 4px;
+}
+
+.tab {
+    padding: 6px 14px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+}
+
+.tab:hover {
+    background: var(--bg-secondary);
+    color: var(--text);
+}
+
+.tab.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.search-box {
+    position: relative;
+}
+
+.search-box input {
+    width: 100%;
+    padding: 10px 14px 10px 36px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+}
+
+.search-box input:focus {
+    border-color: var(--accent);
+}
+
+.search-box::before {
+    content: "\1F50D";
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 14px;
+    opacity: 0.5;
+}
+
+/* Stats */
+.stats {
+    display: flex;
+    gap: 12px;
+    padding: 16px 20px;
+}
+
+.stat-card {
+    flex: 1;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+}
+
+.stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+/* Entry list */
+.entries {
+    padding: 0 20px 20px;
+}
+
+.entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.entry:hover {
+    border-color: var(--accent);
+    box-shadow: 0 2px 8px var(--shadow);
+}
+
+.entry:active {
+    transform: scale(0.99);
+}
+
+.entry-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.entry-time {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.entry-text {
+    font-size: 14px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+    user-select: text;
+}
+
+.entry-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+.entry-delete {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    opacity: 0;
+}
+
+.entry:hover .entry-delete {
+    opacity: 1;
+}
+
+.entry-delete:hover {
+    background: var(--danger);
+    color: #fff;
+}
+
+/* Load more */
+.load-more {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    margin-bottom: 20px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.load-more:hover {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
+/* Empty state */
+.empty {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+}
+
+.empty-icon {
+    font-size: 48px;
+    margin-bottom: 12px;
+}
+
+.empty-text {
+    font-size: 15px;
+}
+
+/* Toast */
+.toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    background: var(--text);
+    color: var(--bg);
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transition: all 0.3s;
+    z-index: 200;
+    pointer-events: none;
+}
+
+.toast.show {
+    transform: translateX(-50%) translateY(0);
+    opacity: 1;
+}
+
+/* Settings */
+.settings-page {
+    padding: 20px;
+    display: none;
+}
+
+.settings-page.active {
+    display: block;
+}
+
+.setting-group {
+    margin-bottom: 20px;
+}
+
+.setting-label {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.setting-description {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.setting-select, .setting-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    color: var(--text);
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.15s;
+    -webkit-appearance: none;
+}
+
+.setting-select:focus, .setting-input:focus {
+    border-color: var(--accent);
+}
+
+.setting-select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2386868b'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+}
+
+.save-btn {
+    display: inline-block;
+    padding: 10px 24px;
+    border: none;
+    border-radius: 10px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.save-btn:hover {
+    background: var(--accent-hover);
+}
+
+/* History page */
+.history-page {
+    display: block;
+}
+
+.history-page.hidden {
+    display: none;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+    <div class="header-top">
+        <h1>AudioLog</h1>
+        <div class="tabs">
+            <button class="tab active" onclick="app.switchTab('history')">История</button>
+            <button class="tab" onclick="app.switchTab('settings')">Настройки</button>
+        </div>
+    </div>
+    <div class="search-box" id="searchBox">
+        <input type="text" id="searchInput" placeholder="Поиск по записям…" autocomplete="off" spellcheck="false">
+    </div>
+</div>
+
+<div class="history-page" id="historyPage">
+    <div class="stats" id="statsBar">
+        <div class="stat-card">
+            <div class="stat-value" id="statTotal">—</div>
+            <div class="stat-label">Всего записей</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statToday">—</div>
+            <div class="stat-label">Сегодня</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statDuration">—</div>
+            <div class="stat-label">Общее время</div>
+        </div>
+    </div>
+    <div class="entries" id="entriesList"></div>
+</div>
+
+<div class="settings-page" id="settingsPage">
+    <div class="setting-group">
+        <div class="setting-label">Модель Whisper</div>
+        <div class="setting-description">Больше модель = точнее, но медленнее</div>
+        <select class="setting-select" id="settingModel">
+            <option value="tiny">tiny (~75 MB, быстрая)</option>
+            <option value="small">small (~500 MB, рекомендуемая)</option>
+            <option value="medium">medium (~1.5 GB, точная)</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Язык</div>
+        <div class="setting-description">Язык распознавания</div>
+        <select class="setting-select" id="settingLanguage">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Количество потоков</div>
+        <div class="setting-description">Потоки CPU для транскрипции (1–8)</div>
+        <input class="setting-input" type="number" id="settingThreads" min="1" max="8" value="4">
+    </div>
+    <button class="save-btn" onclick="app.saveSettings()">Сохранить</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const app = {
+    entries: [],
+    offset: 0,
+    query: '',
+    hasMore: true,
+    PAGE_SIZE: 50,
+
+    init() {
+        document.getElementById('searchInput').addEventListener('input',
+            this.debounce((e) => this.onSearch(e.target.value), 300));
+        this.send('get_stats');
+        this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
+        this.send('get_settings');
+    },
+
+    send(action, data) {
+        const msg = Object.assign({ action }, data || {});
+        window.webkit.messageHandlers.bridge.postMessage(msg);
+    },
+
+    onData(response) {
+        switch (response.action) {
+            case 'history':
+                this.renderEntries(response.data, response.append);
+                break;
+            case 'stats':
+                this.renderStats(response.data);
+                break;
+            case 'settings':
+                this.applySettings(response.data);
+                break;
+            case 'deleted':
+                this.removeEntry(response.id);
+                this.send('get_stats');
+                break;
+            case 'copied':
+                this.showToast('Скопировано в буфер');
+                break;
+            case 'settings_saved':
+                this.showToast('Настройки сохранены');
+                break;
+        }
+    },
+
+    renderStats(stats) {
+        document.getElementById('statTotal').textContent = stats.total;
+        document.getElementById('statToday').textContent = stats.today;
+        const sec = Math.round(stats.total_duration || 0);
+        const min = Math.floor(sec / 60);
+        const hrs = Math.floor(min / 60);
+        let label;
+        if (hrs > 0) label = hrs + ' ч ' + (min % 60) + ' мин';
+        else if (min > 0) label = min + ' мин';
+        else label = sec + ' сек';
+        document.getElementById('statDuration').textContent = label;
+    },
+
+    renderEntries(data, append) {
+        const list = document.getElementById('entriesList');
+
+        if (!append) {
+            this.entries = [];
+            this.offset = 0;
+            list.innerHTML = '';
+        }
+
+        this.entries = this.entries.concat(data);
+        this.offset += data.length;
+        this.hasMore = data.length >= this.PAGE_SIZE;
+
+        if (this.entries.length === 0 && !append) {
+            list.innerHTML = '<div class="empty"><div class="empty-icon">🎙</div>' +
+                '<div class="empty-text">' +
+                (this.query ? 'Ничего не найдено' : 'Пока нет записей') +
+                '</div></div>';
+            return;
+        }
+
+        data.forEach(entry => {
+            list.appendChild(this.createEntryEl(entry));
+        });
+
+        // Remove old load-more button
+        const oldBtn = list.querySelector('.load-more');
+        if (oldBtn) oldBtn.remove();
+
+        if (this.hasMore) {
+            const btn = document.createElement('button');
+            btn.className = 'load-more';
+            btn.textContent = 'Загрузить ещё';
+            btn.onclick = () => this.loadMore();
+            list.appendChild(btn);
+        }
+    },
+
+    createEntryEl(entry) {
+        const el = document.createElement('div');
+        el.className = 'entry';
+        el.dataset.id = entry.id;
+
+        const durationStr = entry.duration_sec
+            ? Math.round(entry.duration_sec) + ' сек'
+            : '';
+
+        el.innerHTML =
+            '<div class="entry-content">' +
+                '<div class="entry-time">' + this.formatTime(entry.timestamp) + '</div>' +
+                '<div class="entry-text">' + this.escapeHtml(entry.text) + '</div>' +
+                (durationStr ? '<div class="entry-meta">' + durationStr + '</div>' : '') +
+            '</div>' +
+            '<button class="entry-delete" title="Удалить">&#x2715;</button>';
+
+        el.querySelector('.entry-content').addEventListener('click', () => {
+            this.send('copy_to_clipboard', { text: entry.text });
+        });
+
+        el.querySelector('.entry-delete').addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.send('delete', { id: entry.id });
+        });
+
+        return el;
+    },
+
+    removeEntry(id) {
+        this.entries = this.entries.filter(e => e.id !== id);
+        const el = document.querySelector(`.entry[data-id="${id}"]`);
+        if (el) {
+            el.style.opacity = '0';
+            el.style.transform = 'translateX(-20px)';
+            el.style.transition = 'all 0.25s';
+            setTimeout(() => el.remove(), 250);
+        }
+    },
+
+    loadMore() {
+        const params = { limit: this.PAGE_SIZE, offset: this.offset };
+        if (this.query) {
+            this.send('search', Object.assign({ query: this.query }, params));
+        } else {
+            this.send('get_history', params);
+        }
+    },
+
+    onSearch(value) {
+        this.query = value.trim();
+        this.offset = 0;
+        if (this.query) {
+            this.send('search', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
+        } else {
+            this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
+        }
+    },
+
+    switchTab(tab) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        if (tab === 'history') {
+            document.querySelectorAll('.tab')[0].classList.add('active');
+            document.getElementById('historyPage').classList.remove('hidden');
+            document.getElementById('settingsPage').classList.remove('active');
+            document.getElementById('searchBox').style.display = '';
+        } else {
+            document.querySelectorAll('.tab')[1].classList.add('active');
+            document.getElementById('historyPage').classList.add('hidden');
+            document.getElementById('settingsPage').classList.add('active');
+            document.getElementById('searchBox').style.display = 'none';
+        }
+    },
+
+    applySettings(s) {
+        document.getElementById('settingModel').value = s.model || 'small';
+        document.getElementById('settingLanguage').value = s.language || 'ru';
+        document.getElementById('settingThreads').value = s.n_threads || 4;
+    },
+
+    saveSettings() {
+        const s = {
+            model: document.getElementById('settingModel').value,
+            language: document.getElementById('settingLanguage').value,
+            n_threads: parseInt(document.getElementById('settingThreads').value) || 4,
+        };
+        this.send('save_settings', s);
+    },
+
+    showToast(text) {
+        const toast = document.getElementById('toast');
+        toast.textContent = text;
+        toast.classList.add('show');
+        clearTimeout(this._toastTimer);
+        this._toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+    },
+
+    formatTime(ts) {
+        if (!ts) return '';
+        const d = new Date(ts.replace(' ', 'T'));
+        const now = new Date();
+        const isToday = d.toDateString() === now.toDateString();
+        const time = d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+        if (isToday) return 'Сегодня, ' + time;
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        if (d.toDateString() === yesterday.toDateString()) return 'Вчера, ' + time;
+        return d.toLocaleDateString('ru', { day: 'numeric', month: 'short' }) + ', ' + time;
+    },
+
+    escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+    },
+
+    debounce(fn, ms) {
+        let timer;
+        return function(...args) {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn.apply(this, args), ms);
+        };
+    },
+
+    // Called from Python when new transcription is saved
+    onNewEntry() {
+        this.query = '';
+        this.offset = 0;
+        document.getElementById('searchInput').value = '';
+        this.send('get_stats');
+        this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
+    }
+};
+
+document.addEventListener('DOMContentLoaded', () => app.init());
+</script>
+</body>
+</html>

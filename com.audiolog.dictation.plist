@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.audiolog.dictation</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/yuliiparfonov/audio-log-project/AudioLog.app/Contents/MacOS/audiolog</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/yuliiparfonov/audio-log-project</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/yuliiparfonov/Library/Logs/audio-log/stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/yuliiparfonov/Library/Logs/audio-log/stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>
