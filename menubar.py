@@ -2,6 +2,7 @@
 
 import threading
 
+import AppKit
 import rumps
 from PyObjCTools import AppHelper
 
@@ -148,6 +149,9 @@ class MenuBarApp(rumps.App):
         rumps.quit_application()
 
     def run(self, **kwargs) -> None:
+        # Hide Python from Dock — this is a menubar-only app
+        AppKit.NSApplication.sharedApplication().setActivationPolicy_(1)
+
         self._overlay.build()
         self._history_window.build()
 
