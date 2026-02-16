@@ -1,5 +1,7 @@
 """Hotkey listener using native macOS NSEvent global monitor."""
 
+import time
+
 from AppKit import NSEvent
 from utils import get_logger
 
@@ -27,6 +29,7 @@ class HotkeyListener:
         self._on_deactivate = on_deactivate
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
         self._pressed = False
+        self._pressed_at: float = 0.0
         self._monitor = None
 
     def start(self):
@@ -50,8 +53,18 @@ class HotkeyListener:
 
         option_pressed = bool(event.modifierFlags() & _OPTION_FLAG)
 
+        # Guard: if key-up was missed (sleep, focus loss), auto-reset after 120s
+        if self._pressed and (time.monotonic() - self._pressed_at) > 120:
+            log.warning("Hotkey pressed state exceeded 120s — forcing reset")
+            self._pressed = False
+            try:
+                self._on_deactivate()
+            except Exception:
+                log.exception("Error in forced on_deactivate")
+
         if option_pressed and not self._pressed:
             self._pressed = True
+            self._pressed_at = time.monotonic()
             try:
                 self._on_activate()
             except Exception:

@@ -36,6 +36,7 @@ class MenuBarApp(rumps.App):
         self._overlay = Overlay()
         self._history_window = HistoryWindow(config)
         self._transcription_lock = threading.Lock()
+        self._safety_timer: threading.Timer | None = None
         self._ready = False
 
         db.init_db()
@@ -76,10 +77,24 @@ class MenuBarApp(rumps.App):
         self._status_item.title = "🔴 Запись…"
         self._overlay.show("Запись…", state="record")
 
+        # Safety timer — auto-stop recording after 120 seconds
+        self._cancel_safety_timer()
+        self._safety_timer = threading.Timer(
+            120.0, lambda: AppHelper.callAfter(self._on_deactivate)
+        )
+        self._safety_timer.daemon = True
+        self._safety_timer.start()
+
+    def _cancel_safety_timer(self) -> None:
+        if self._safety_timer is not None:
+            self._safety_timer.cancel()
+            self._safety_timer = None
+
     def _on_deactivate(self) -> None:
         """Called on main thread when hotkey is released."""
         if not self._ready:
             return
+        self._cancel_safety_timer()
         audio = self._recorder.stop()
         self._feedback.on_record_stop()
 
@@ -149,8 +164,10 @@ class MenuBarApp(rumps.App):
         rumps.quit_application()
 
     def run(self, **kwargs) -> None:
-        # Hide Python from Dock — this is a menubar-only app
-        AppKit.NSApplication.sharedApplication().setActivationPolicy_(1)
+        nsapp = AppKit.NSApplication.sharedApplication()
+        # NSApplicationActivationPolicyAccessory — menu bar item works,
+        # no Dock icon (correct for a menu bar utility)
+        nsapp.setActivationPolicy_(1)
 
         self._overlay.build()
         self._history_window.build()

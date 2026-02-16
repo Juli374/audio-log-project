@@ -96,8 +96,11 @@ class Recorder:
             self._recording = False
 
         if self._stream is not None:
-            self._stream.stop()
-            self._stream.close()
+            try:
+                self._stream.abort()   # abort — не блокирует, в отличие от stop()
+                self._stream.close()
+            except Exception:
+                log.warning("Error closing audio stream", exc_info=True)
             self._stream = None
 
         with self._lock:
