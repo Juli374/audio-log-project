@@ -1,6 +1,7 @@
 """Audio recording via sounddevice."""
 
 import threading
+import time
 
 import numpy as np
 import sounddevice as sd
@@ -22,6 +23,7 @@ class Recorder:
         self.last_duration: float = 0.0
         self.last_rms: float = 0.0
         self.last_peak: float = 0.0
+        self.recording_start_time: float = 0.0
 
     def _callback(
         self,
@@ -89,19 +91,33 @@ class Recorder:
             callback=self._callback,
         )
         self._stream.start()
+        self.recording_start_time = time.monotonic()
         log.info("Recording started")
+
+    @property
+    def is_recording(self) -> bool:
+        return self._recording
 
     def stop(self) -> np.ndarray:
         with self._lock:
             self._recording = False
 
         if self._stream is not None:
-            try:
-                self._stream.abort()   # abort — не блокирует, в отличие от stop()
-                self._stream.close()
-            except Exception:
-                log.warning("Error closing audio stream", exc_info=True)
+            stream = self._stream
             self._stream = None
+
+            def _close():
+                try:
+                    stream.abort()
+                    stream.close()
+                except Exception:
+                    log.warning("Error closing audio stream", exc_info=True)
+
+            closer = threading.Thread(target=_close, daemon=True)
+            closer.start()
+            closer.join(timeout=3.0)
+            if closer.is_alive():
+                log.warning("Audio stream close timed out (3s) — leaked stream")
 
         with self._lock:
             chunks = self._chunks.copy()

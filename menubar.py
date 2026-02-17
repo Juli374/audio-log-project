@@ -1,6 +1,7 @@
 """macOS menu bar indicator using rumps."""
 
 import threading
+import time
 from pathlib import Path
 
 import AppKit
@@ -41,8 +42,8 @@ class MenuBarApp(rumps.App):
         self._overlay = Overlay()
         self._history_window = HistoryWindow(config)
         self._transcription_lock = threading.Lock()
-        self._safety_timer: threading.Timer | None = None
         self._is_recording = False
+        self._watchdog_stop = threading.Event()
         self._ready = False
 
         db.init_db()
@@ -84,19 +85,56 @@ class MenuBarApp(rumps.App):
         self._status_item.title = "🔴 Запись…"
         self._overlay.show("Запись…", state="record")
 
-        # Safety timer — auto-stop recording after configured max duration
-        self._cancel_safety_timer()
-        self._safety_timer = threading.Timer(
-            float(self._config.max_recording_seconds),
-            lambda: AppHelper.callAfter(self._on_deactivate),
-        )
-        self._safety_timer.daemon = True
-        self._safety_timer.start()
+        # Safety watchdog — runs in background thread, independent of main thread.
+        # Checks every 5 seconds and force-stops if max duration exceeded.
+        self._watchdog_stop.clear()
+        t = threading.Thread(target=self._safety_watchdog, daemon=True)
+        t.start()
 
-    def _cancel_safety_timer(self) -> None:
-        if self._safety_timer is not None:
-            self._safety_timer.cancel()
-            self._safety_timer = None
+    def _safety_watchdog(self) -> None:
+        """Background thread: force-stops recording after max_recording_seconds.
+
+        Does NOT use AppHelper.callAfter for the critical stop logic,
+        so it works even if the main thread / NSApplication run loop is blocked.
+        """
+        max_sec = float(self._config.max_recording_seconds)
+        while not self._watchdog_stop.wait(timeout=5.0):
+            if not self._is_recording:
+                return
+            elapsed = time.monotonic() - self._recorder.recording_start_time
+            if elapsed >= max_sec:
+                log.warning("Safety watchdog: force-stopping recording "
+                            "after %.0f seconds (limit %d)",
+                            elapsed, self._config.max_recording_seconds)
+                self._force_stop_recording()
+                return
+
+    def _force_stop_recording(self) -> None:
+        """Force-stop recording from ANY thread (safety watchdog)."""
+        if not self._is_recording:
+            return
+        self._is_recording = False
+        self._watchdog_stop.set()
+        if self._hotkey:
+            self._hotkey.reset_toggle()
+
+        audio = self._recorder.stop()
+
+        if len(audio) > 0:
+            t = threading.Thread(target=self._process, args=(audio,), daemon=True)
+            t.start()
+
+        # UI updates — best effort via main thread
+        def _update_ui():
+            self.title = ICON_IDLE
+            self._status_item.title = "⚠️ Запись остановлена (таймаут)"
+            self._overlay.show("Таймаут!", state="error")
+            self._auto_hide_overlay()
+
+        try:
+            AppHelper.callAfter(_update_ui)
+        except Exception:
+            pass
 
     def _on_deactivate(self) -> None:
         """Called on main thread when hotkey is released."""
@@ -106,7 +144,7 @@ class MenuBarApp(rumps.App):
                 self._hotkey.reset_toggle()
             return
         self._is_recording = False
-        self._cancel_safety_timer()
+        self._watchdog_stop.set()
         if self._hotkey:
             self._hotkey.reset_toggle()
         audio = self._recorder.stop()
