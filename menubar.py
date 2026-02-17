@@ -101,9 +101,14 @@ class MenuBarApp(rumps.App):
     def _on_deactivate(self) -> None:
         """Called on main thread when hotkey is released."""
         if not self._ready or not self._is_recording:
+            # Sync hotkey toggle state in case it's out of sync
+            if self._hotkey:
+                self._hotkey.reset_toggle()
             return
         self._is_recording = False
         self._cancel_safety_timer()
+        if self._hotkey:
+            self._hotkey.reset_toggle()
         audio = self._recorder.stop()
         self._feedback.on_record_stop()
 

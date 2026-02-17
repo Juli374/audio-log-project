@@ -1,6 +1,7 @@
 """Hotkey listener using native macOS NSEvent global monitor."""
 
 import threading
+import time
 
 from AppKit import NSEvent
 from PyObjCTools import AppHelper
@@ -21,6 +22,10 @@ _RIGHT_OPTION_KEYCODE = 61
 # Polling interval for detecting missed key-up events
 _POLL_INTERVAL = 0.5
 
+# Minimum interval between toggle actions (prevents double-trigger from
+# held key repeats or bouncing contacts)
+_TOGGLE_DEBOUNCE = 0.3
+
 
 class HotkeyListener:
     """Monitors Right Option key press/release via NSEvent global monitor.
@@ -39,6 +44,7 @@ class HotkeyListener:
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
         self._pressed = False
         self._recording = False  # for toggle mode
+        self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
         self._monitor = None
         self._poll_timer: threading.Timer | None = None
 
@@ -87,29 +93,40 @@ class HotkeyListener:
                 log.exception("Error in on_deactivate")
 
     def _handle_toggle(self, option_pressed):
-        """Toggle mode: press once to start, press again to stop."""
+        """Toggle mode: press once to start, press again to stop.
+
+        Uses time-based debounce instead of _pressed flag to avoid getting
+        stuck when macOS drops a key-up event.
+        """
         if not option_pressed:
-            # Key released — ignore in toggle mode
-            self._pressed = False
             return
 
-        if self._pressed:
-            # Already saw this key-down (held), ignore repeats
+        now = time.monotonic()
+        if now - self._last_toggle_time < _TOGGLE_DEBOUNCE:
             return
-        self._pressed = True
+        self._last_toggle_time = now
 
         if not self._recording:
             self._recording = True
+            log.info("Toggle: recording ON")
             try:
                 self._on_activate()
             except Exception:
+                self._recording = False
                 log.exception("Error in on_activate (toggle)")
         else:
             self._recording = False
+            log.info("Toggle: recording OFF")
             try:
                 self._on_deactivate()
             except Exception:
                 log.exception("Error in on_deactivate (toggle)")
+
+    def reset_toggle(self):
+        """Reset toggle state. Called externally when recording is
+        force-stopped (e.g. by safety timer)."""
+        self._recording = False
+        self._pressed = False
 
     def _start_polling(self):
         """Start polling chain to detect missed key-up events."""
