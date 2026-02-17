@@ -180,6 +180,8 @@ class HistoryWindow:
                 "model": str(data.get("model", "small")),
                 "language": str(data.get("language", "ru")),
                 "n_threads": int(data.get("n_threads", 4)),
+                "max_recording_seconds": int(data.get("max_recording_seconds", 300)),
+                "hotkey_mode": str(data.get("hotkey_mode", "hold")),
             }
             self._config.save_settings(settings)
             self._send_response({"action": "settings_saved"})

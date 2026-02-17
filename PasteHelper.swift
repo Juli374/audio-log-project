@@ -4,8 +4,12 @@ import Foundation
 
 let logFile: FileHandle? = {
     let path = NSHomeDirectory() + "/Library/Logs/audio-log/paste-helper.log"
-    FileManager.default.createFile(atPath: path, contents: nil)
-    return FileHandle(forWritingAtPath: path)
+    if !FileManager.default.fileExists(atPath: path) {
+        FileManager.default.createFile(atPath: path, contents: nil)
+    }
+    let fh = FileHandle(forWritingAtPath: path)
+    fh?.seekToEndOfFile()
+    return fh
 }()
 
 func log(_ msg: String) {

@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from config import Config
@@ -20,8 +21,10 @@ def setup_logging(config: Config) -> None:
 
     fmt = logging.Formatter(config.log_format)
 
-    # Always log to file
-    fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+    # Rotating file log: 500KB per file, keep 3 backups (~2MB total history)
+    fh = RotatingFileHandler(
+        LOG_FILE, maxBytes=500_000, backupCount=3, encoding="utf-8"
+    )
     fh.setLevel(level)
     fh.setFormatter(fmt)
     root.addHandler(fh)

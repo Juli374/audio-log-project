@@ -30,6 +30,12 @@ class Config:
     translate: bool = False
     min_duration: float = 0.5  # ignore recordings shorter than this (seconds)
 
+    # Safety: max recording duration (seconds)
+    max_recording_seconds: int = 300
+
+    # Hotkey mode: "hold" (hold to record) or "toggle" (press to start/stop)
+    hotkey_mode: str = "hold"
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
@@ -66,10 +72,25 @@ class Config:
             "model": self.model_name,
             "language": self.language,
             "n_threads": self.n_threads,
+            "max_recording_seconds": self.max_recording_seconds,
+            "hotkey_mode": self.hotkey_mode,
         }
 
+    def apply_settings(self, settings: dict) -> None:
+        """Apply settings dict to Config fields (in-memory)."""
+        if "language" in settings:
+            self.language = str(settings["language"])
+        if "n_threads" in settings:
+            self.n_threads = int(settings["n_threads"])
+        if "max_recording_seconds" in settings:
+            self.max_recording_seconds = int(settings["max_recording_seconds"])
+        if "hotkey_mode" in settings:
+            self.hotkey_mode = str(settings["hotkey_mode"])
+        # model_name is not applied here — requires model reload on restart
+
     def save_settings(self, settings: dict) -> None:
-        """Save persistent settings to JSON file."""
+        """Save persistent settings to JSON file and apply to Config."""
+        self.apply_settings(settings)
         self.ensure_data_dir()
         with open(self.settings_path, "w") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)

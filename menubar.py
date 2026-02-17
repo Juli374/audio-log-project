@@ -1,6 +1,7 @@
 """macOS menu bar indicator using rumps."""
 
 import threading
+from pathlib import Path
 
 import AppKit
 import rumps
@@ -30,6 +31,10 @@ class MenuBarApp(rumps.App):
         self._config = config
         setup_logging(config)
 
+        # Apply saved settings to config on startup
+        saved = config.load_settings()
+        config.apply_settings(saved)
+
         self._feedback = Feedback(config)
         self._recorder = Recorder(config)
         self._transcriber = Transcriber(config)
@@ -37,6 +42,7 @@ class MenuBarApp(rumps.App):
         self._history_window = HistoryWindow(config)
         self._transcription_lock = threading.Lock()
         self._safety_timer: threading.Timer | None = None
+        self._is_recording = False
         self._ready = False
 
         db.init_db()
@@ -71,16 +77,18 @@ class MenuBarApp(rumps.App):
         """Called on main thread when hotkey is pressed."""
         if not self._ready:
             return
+        self._is_recording = True
         self._feedback.on_record_start()
         self._recorder.start()
         self.title = ICON_RECORDING
         self._status_item.title = "🔴 Запись…"
         self._overlay.show("Запись…", state="record")
 
-        # Safety timer — auto-stop recording after 120 seconds
+        # Safety timer — auto-stop recording after configured max duration
         self._cancel_safety_timer()
         self._safety_timer = threading.Timer(
-            120.0, lambda: AppHelper.callAfter(self._on_deactivate)
+            float(self._config.max_recording_seconds),
+            lambda: AppHelper.callAfter(self._on_deactivate),
         )
         self._safety_timer.daemon = True
         self._safety_timer.start()
@@ -92,8 +100,9 @@ class MenuBarApp(rumps.App):
 
     def _on_deactivate(self) -> None:
         """Called on main thread when hotkey is released."""
-        if not self._ready:
+        if not self._ready or not self._is_recording:
             return
+        self._is_recording = False
         self._cancel_safety_timer()
         audio = self._recorder.stop()
         self._feedback.on_record_stop()
@@ -117,34 +126,40 @@ class MenuBarApp(rumps.App):
         with self._transcription_lock:
             try:
                 text = self._transcriber.transcribe(audio)
-                if text:
-                    paste_text(text)
-                    db.save(
-                        text,
-                        self._recorder.last_duration,
-                        self._recorder.last_rms,
-                        self._recorder.last_peak,
-                    )
-                    self._history_window.notify_new_entry()
-                    self._set_state(ICON_IDLE, f"✅ {text[:40]}…",
-                                    "Вставлено!", "done")
-                    # Auto-hide overlay after 3 seconds
-                    def _hide_later():
-                        import time
-                        time.sleep(3.0)
-                        AppHelper.callAfter(self._overlay.hide)
-                    threading.Thread(target=_hide_later, daemon=True).start()
-                else:
-                    self._set_state(ICON_IDLE, "Готов к записи")
             except Exception:
                 log.exception("Transcription failed")
                 self._feedback.on_error()
-                self._set_state(ICON_IDLE, "❌ Ошибка", "Ошибка", "error")
-                def _hide_error():
-                    import time
-                    time.sleep(3.0)
-                    AppHelper.callAfter(self._overlay.hide)
-                threading.Thread(target=_hide_error, daemon=True).start()
+                self._set_state(ICON_IDLE, "❌ Ошибка распознавания",
+                                "Ошибка", "error")
+                self._auto_hide_overlay()
+                return
+
+            if not text:
+                self._set_state(ICON_IDLE, "Готов к записи")
+                return
+
+            try:
+                paste_text(text)
+            except Exception:
+                log.exception("Paste failed (text saved to DB and clipboard)")
+
+            db.save(
+                text,
+                self._recorder.last_duration,
+                self._recorder.last_rms,
+                self._recorder.last_peak,
+            )
+            self._history_window.notify_new_entry()
+            self._set_state(ICON_IDLE, f"✅ {text[:40]}…",
+                            "Вставлено!", "done")
+            self._auto_hide_overlay()
+
+    def _auto_hide_overlay(self) -> None:
+        def _hide():
+            import time
+            time.sleep(3.0)
+            AppHelper.callAfter(self._overlay.hide)
+        threading.Thread(target=_hide, daemon=True).start()
 
     def _load_model(self) -> None:
         """Runs in background thread."""
@@ -165,12 +180,32 @@ class MenuBarApp(rumps.App):
 
     def run(self, **kwargs) -> None:
         nsapp = AppKit.NSApplication.sharedApplication()
-        # NSApplicationActivationPolicyAccessory — menu bar item works,
-        # no Dock icon (correct for a menu bar utility)
-        nsapp.setActivationPolicy_(1)
+        # NSApplicationActivationPolicyRegular — shows in Dock
+        nsapp.setActivationPolicy_(0)
+
+        # Set application icon (overrides default Python icon)
+        icon_path = Path(__file__).parent / "assets" / "AppIcon.icns"
+        if icon_path.exists():
+            icon_image = AppKit.NSImage.alloc().initWithContentsOfFile_(
+                str(icon_path)
+            )
+            nsapp.setApplicationIconImage_(icon_image)
 
         self._overlay.build()
         self._history_window.build()
+
+        # Inject Dock-click handler into rumps delegate class (rumps.rumps.NSApp)
+        from rumps.rumps import NSApp as RumpsDelegate
+        history_window = self._history_window
+
+        def applicationShouldHandleReopen_hasVisibleWindows_(
+            _self, _reopen, _has_visible
+        ):
+            history_window.show()
+            return True
+        RumpsDelegate.applicationShouldHandleReopen_hasVisibleWindows_ = (
+            applicationShouldHandleReopen_hasVisibleWindows_
+        )
 
         self._hotkey = HotkeyListener(
             config=self._config,
@@ -181,5 +216,8 @@ class MenuBarApp(rumps.App):
 
         t = threading.Thread(target=self._load_model, daemon=True)
         t.start()
+
+        # Show history window as the main window on launch
+        self._history_window.show()
 
         super().run(**kwargs)

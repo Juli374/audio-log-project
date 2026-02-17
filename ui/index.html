@@ -434,6 +434,24 @@ body {
         <div class="setting-description">Потоки CPU для транскрипции (1–8)</div>
         <input class="setting-input" type="number" id="settingThreads" min="1" max="8" value="4">
     </div>
+    <div class="setting-group">
+        <div class="setting-label">Режим хоткея</div>
+        <div class="setting-description">Зажать — держите клавишу. Нажать — нажмите для старта, ещё раз для остановки</div>
+        <select class="setting-select" id="settingHotkeyMode">
+            <option value="hold">Зажать (удерживать)</option>
+            <option value="toggle">Нажать (вкл/выкл)</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Макс. время записи</div>
+        <div class="setting-description">Автоматическая остановка записи через указанное время</div>
+        <select class="setting-select" id="settingMaxRecording">
+            <option value="120">2 мин</option>
+            <option value="300" selected>5 мин</option>
+            <option value="600">10 мин</option>
+            <option value="1800">30 мин</option>
+        </select>
+    </div>
     <button class="save-btn" onclick="app.saveSettings()">Сохранить</button>
 </div>
 
@@ -613,6 +631,8 @@ const app = {
         document.getElementById('settingModel').value = s.model || 'small';
         document.getElementById('settingLanguage').value = s.language || 'ru';
         document.getElementById('settingThreads').value = s.n_threads || 4;
+        document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
+        document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
     },
 
     saveSettings() {
@@ -620,6 +640,8 @@ const app = {
             model: document.getElementById('settingModel').value,
             language: document.getElementById('settingLanguage').value,
             n_threads: parseInt(document.getElementById('settingThreads').value) || 4,
+            hotkey_mode: document.getElementById('settingHotkeyMode').value,
+            max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
         };
         this.send('save_settings', s);
     },
