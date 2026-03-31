@@ -23,7 +23,20 @@ def _acquire_lock() -> bool:
         return False
 
 
+def _check_dependencies() -> None:
+    """Verify critical imports before heavy initialization."""
+    try:
+        import rumps  # noqa: F401
+        import sounddevice  # noqa: F401
+        import numpy  # noqa: F401
+    except ImportError as e:
+        print(f"Missing dependency: {e}", file=sys.stderr)
+        sys.exit(0)  # exit 0 so launchd does NOT restart
+
+
 def main() -> None:
+    _check_dependencies()
+
     if not _acquire_lock():
         print("AudioLog is already running", file=sys.stderr)
         sys.exit(0)

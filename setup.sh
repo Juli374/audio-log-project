@@ -4,7 +4,20 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-PYTHON="/opt/homebrew/bin/python3.12"
+# Auto-detect Python 3.10+
+PYTHON=""
+for candidate in python3.12 python3.11 python3.10 python3; do
+    if command -v "$candidate" &>/dev/null; then
+        PYTHON="$(command -v "$candidate")"
+        break
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    echo "ERROR: Python 3.10+ not found. Install via: brew install python@3.12"
+    exit 1
+fi
+echo "Using Python: $PYTHON ($($PYTHON --version))"
+
 VENV_DIR="$SCRIPT_DIR/.venv"
 MODEL_NAME="small"
 MODEL_DIR="$SCRIPT_DIR/models"
@@ -32,6 +45,34 @@ if [ ! -f "$MODEL_FILE" ]; then
     curl -L -o "$MODEL_FILE" "$MODEL_URL"
 else
     echo "Model already downloaded: $MODEL_FILE"
+fi
+
+# 4. Build PasteHelper.app (text injection helper)
+PASTE_APP="$SCRIPT_DIR/PasteHelper.app/Contents/MacOS"
+if [ ! -f "$PASTE_APP/PasteHelper" ]; then
+    echo "Building PasteHelper.app…"
+    mkdir -p "$PASTE_APP"
+    cat > "$SCRIPT_DIR/PasteHelper.app/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>PasteHelper</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.audiolog.paste-helper</string>
+    <key>CFBundleName</key>
+    <string>PasteHelper</string>
+    <key>LSUIElement</key>
+    <true/>
+</dict>
+</plist>
+PLIST
+    swiftc "$SCRIPT_DIR/PasteHelper.swift" -o "$PASTE_APP/PasteHelper"
+    echo "PasteHelper built successfully"
+else
+    echo "PasteHelper already built"
 fi
 
 echo ""

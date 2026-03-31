@@ -46,6 +46,10 @@ class HistoryWindow:
         self._window = None
         self._webview = None
         self._built = False
+        self._recorder = None
+        self._transcriber = None
+        self._voice_recording = False
+        self._voice_target = None  # 'note' or 'task'
 
     def build(self) -> None:
         """Create the window and webview. Must be called on main thread."""
@@ -159,6 +163,12 @@ class HistoryWindow:
             stats = db.get_stats()
             self._send_response({"action": "stats", "data": stats})
 
+        elif action == "update_entry":
+            row_id = int(data.get("id", 0))
+            text = str(data.get("text", ""))
+            db.update_entry(row_id, text)
+            self._send_response({"action": "entry_updated", "id": row_id, "text": text})
+
         elif action == "delete":
             row_id = int(data.get("id", 0))
             db.delete(row_id)
@@ -182,6 +192,156 @@ class HistoryWindow:
                 "n_threads": int(data.get("n_threads", 4)),
                 "max_recording_seconds": int(data.get("max_recording_seconds", 300)),
                 "hotkey_mode": str(data.get("hotkey_mode", "hold")),
+                "transcription_mode": str(data.get("transcription_mode", "local")),
+                "openai_api_key": str(data.get("openai_api_key", "")),
+                "openai_model": str(data.get("openai_model", "gpt-4o-mini-transcribe")),
             }
             self._config.save_settings(settings)
             self._send_response({"action": "settings_saved"})
+
+        elif action == "test_api":
+            import threading
+            api_key = str(data.get("api_key", ""))
+            model = str(data.get("model", "gpt-4o-mini-transcribe"))
+
+            def _test():
+                from transcriber import test_api_connection
+                result = test_api_connection(api_key, model)
+                def _respond():
+                    self._send_response({"action": "test_api_result", **result})
+                AppHelper.callAfter(_respond)
+
+            threading.Thread(target=_test, daemon=True).start()
+
+        # --- Заметки ---
+        elif action == "save_note":
+            text = str(data.get("text", ""))
+            if text:
+                db.save_note(text)
+            self._send_response({"action": "note_saved"})
+
+        elif action == "get_notes":
+            limit = int(data.get("limit", 50))
+            offset = int(data.get("offset", 0))
+            rows = db.get_notes(limit, offset)
+            self._send_response({"action": "notes", "data": rows, "append": offset > 0})
+
+        elif action == "search_notes":
+            query = str(data.get("query", ""))
+            limit = int(data.get("limit", 50))
+            offset = int(data.get("offset", 0))
+            rows = db.search_notes(query, limit, offset)
+            self._send_response({"action": "notes", "data": rows, "append": offset > 0})
+
+        elif action == "update_note":
+            row_id = int(data.get("id", 0))
+            text = str(data.get("text", ""))
+            db.update_note(row_id, text)
+            self._send_response({"action": "note_updated", "id": row_id, "text": text})
+
+        elif action == "delete_note":
+            row_id = int(data.get("id", 0))
+            db.delete_note(row_id)
+            self._send_response({"action": "note_deleted", "id": row_id})
+
+        # --- Дневник ---
+        elif action == "get_diary":
+            date = str(data.get("date", ""))
+            entry = db.get_diary(date)
+            self._send_response({"action": "diary", "data": entry})
+
+        elif action == "save_diary":
+            date = str(data.get("date", ""))
+            text = str(data.get("text", ""))
+            db.save_diary(date, text)
+            self._send_response({"action": "diary_saved"})
+
+        elif action == "get_diary_streak":
+            streak = db.get_diary_streak()
+            self._send_response({"action": "diary_streak", "data": streak})
+
+        # --- Задачи ---
+        elif action == "save_task":
+            text = str(data.get("text", ""))
+            if text:
+                db.save_task(text)
+            self._send_response({"action": "task_saved"})
+
+        elif action == "get_tasks":
+            f = str(data.get("filter", "all"))
+            rows = db.get_tasks(f)
+            self._send_response({"action": "tasks", "data": rows})
+
+        elif action == "toggle_task":
+            row_id = int(data.get("id", 0))
+            db.toggle_task(row_id)
+            self._send_response({"action": "task_toggled"})
+
+        elif action == "update_task":
+            row_id = int(data.get("id", 0))
+            text = str(data.get("text", ""))
+            db.update_task(row_id, text)
+            self._send_response({"action": "task_updated", "id": row_id, "text": text})
+
+        elif action == "delete_task":
+            row_id = int(data.get("id", 0))
+            db.delete_task(row_id)
+            self._send_response({"action": "task_deleted", "id": row_id})
+
+        # --- Voice recording ---
+        elif action == "start_voice":
+            target = str(data.get("target", "note"))
+            if self._voice_recording or not self._recorder or not self._transcriber:
+                self._send_response({"action": "voice_error", "error": "busy"})
+                return
+            if self._recorder.is_recording:
+                self._send_response({"action": "voice_error", "error": "busy"})
+                return
+            self._voice_recording = True
+            self._voice_target = target
+            self._send_response({"action": "voice_started"})
+
+            import threading
+            def _start():
+                try:
+                    self._recorder.start()
+                except Exception:
+                    log.exception("Voice recording failed to start")
+                    self._voice_recording = False
+                    def _err():
+                        self._send_response({"action": "voice_error", "error": "mic"})
+                    AppHelper.callAfter(_err)
+            threading.Thread(target=_start, daemon=True).start()
+
+        elif action == "stop_voice":
+            if not self._voice_recording:
+                return
+            target = self._voice_target
+            self._voice_recording = False
+            self._voice_target = None
+
+            import threading
+            def _stop_and_transcribe():
+                try:
+                    audio = self._recorder.stop()
+                    if len(audio) == 0:
+                        def _empty():
+                            self._send_response({"action": "voice_result", "target": target, "text": ""})
+                        AppHelper.callAfter(_empty)
+                        return
+                    text = self._transcriber.transcribe(audio)
+                    if text:
+                        if target == "note":
+                            db.save_note(text)
+                        elif target == "task":
+                            db.save_task(text)
+                        # diary: JS handles save_diary with appended text
+                    def _done():
+                        self._send_response({"action": "voice_result", "target": target, "text": text or ""})
+                    AppHelper.callAfter(_done)
+                except Exception:
+                    log.exception("Voice transcription failed")
+                    def _err():
+                        self._send_response({"action": "voice_error", "error": "transcribe"})
+                    AppHelper.callAfter(_err)
+            threading.Thread(target=_stop_and_transcribe, daemon=True).start()

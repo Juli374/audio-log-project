@@ -10,7 +10,7 @@ from feedback import Feedback
 from hotkey import HotkeyListener
 from output import paste_text
 from recorder import Recorder
-from transcriber import Transcriber
+from transcriber import create_transcriber
 from utils import get_logger, setup_logging
 
 log = get_logger(__name__)
@@ -23,8 +23,10 @@ class App:
 
         self._feedback = Feedback(self._config)
         self._recorder = Recorder(self._config)
-        self._transcriber = Transcriber(self._config)
+        self._transcriber = create_transcriber(self._config)
         self._transcription_lock = threading.Lock()
+        self._is_recording = False
+        self._is_processing = False
 
         self._hotkey = HotkeyListener(
             config=self._config,
@@ -33,10 +35,24 @@ class App:
         )
 
     def _on_activate(self) -> None:
+        if self._is_recording or self._is_processing:
+            return
+        self._is_recording = True
         self._feedback.on_record_start()
-        self._recorder.start()
+
+        def _start():
+            try:
+                self._recorder.start()
+            except Exception:
+                log.exception("Failed to start recording")
+                self._is_recording = False
+
+        threading.Thread(target=_start, daemon=True).start()
 
     def _on_deactivate(self) -> None:
+        if not self._is_recording:
+            return
+        self._is_recording = False
         audio = self._recorder.stop()
         self._feedback.on_record_stop()
 
@@ -48,14 +64,24 @@ class App:
         t.start()
 
     def _process(self, audio) -> None:
-        with self._transcription_lock:
-            try:
-                text = self._transcriber.transcribe(audio)
-                if text:
+        self._is_processing = True
+        try:
+            with self._transcription_lock:
+                try:
+                    text = self._transcriber.transcribe(audio)
+                except Exception:
+                    log.exception("Transcription failed")
+                    self._feedback.on_error()
+                    return
+
+            # Paste OUTSIDE the lock
+            if text:
+                try:
                     paste_text(text)
-            except Exception:
-                log.exception("Transcription failed")
-                self._feedback.on_error()
+                except Exception:
+                    log.exception("Paste failed")
+        finally:
+            self._is_processing = False
 
     def run(self) -> None:
         log.info("Starting audio-log-project (headless)…")

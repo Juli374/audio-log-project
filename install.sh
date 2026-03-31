@@ -5,15 +5,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLIST_NAME="com.audiolog.dictation"
 PLIST_SRC="$SCRIPT_DIR/${PLIST_NAME}.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
-APP_EXEC="$SCRIPT_DIR/AudioLog.app/Contents/MacOS/audiolog"
 LOG_DIR="$HOME/Library/Logs/audio-log"
 
 echo "=== Installing audio-log as LaunchAgent ==="
 
-# Check app bundle exists
-if [ ! -f "$APP_EXEC" ]; then
-    echo "ERROR: AudioLog.app not found."
-    exit 1
+# Determine executable: prefer AudioLog.app, fallback to venv python
+APP_EXEC="$SCRIPT_DIR/AudioLog.app/Contents/MacOS/audiolog"
+if [ -f "$APP_EXEC" ]; then
+    PROGRAM_ARGS="<string>${APP_EXEC}</string>"
+    echo "Using AudioLog.app bundle"
+else
+    VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
+    if [ ! -f "$VENV_PYTHON" ]; then
+        echo "ERROR: Neither AudioLog.app nor .venv found. Run setup.sh first."
+        exit 1
+    fi
+    PROGRAM_ARGS="<string>${VENV_PYTHON}</string>
+        <string>${SCRIPT_DIR}/run.py</string>"
+    APP_EXEC="$VENV_PYTHON"
+    echo "Using venv python (AudioLog.app not found)"
 fi
 
 # Check venv exists
@@ -37,7 +47,7 @@ cat > "$PLIST_SRC" <<EOF
 
     <key>ProgramArguments</key>
     <array>
-        <string>${APP_EXEC}</string>
+        ${PROGRAM_ARGS}
     </array>
 
     <key>WorkingDirectory</key>
@@ -81,5 +91,6 @@ echo "To uninstall:  bash uninstall.sh"
 echo ""
 echo "IMPORTANT (one-time setup):"
 echo "  System Settings → Privacy & Security → Accessibility"
-echo "    → click + → navigate to: $SCRIPT_DIR"
-echo "    → select AudioLog.app → Open"
+echo "    → add: $APP_EXEC"
+echo "  System Settings → Privacy & Security → Microphone"
+echo "    → allow for the same app"

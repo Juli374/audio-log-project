@@ -16,7 +16,7 @@ from hotkey import HotkeyListener
 from output import paste_text
 from overlay import Overlay
 from recorder import Recorder
-from transcriber import Transcriber
+from transcriber import create_transcriber
 from utils import get_logger, setup_logging
 
 log = get_logger(__name__)
@@ -38,22 +38,36 @@ class MenuBarApp(rumps.App):
 
         self._feedback = Feedback(config)
         self._recorder = Recorder(config)
-        self._transcriber = Transcriber(config)
+        self._transcriber = create_transcriber(config)
         self._overlay = Overlay()
         self._history_window = HistoryWindow(config)
+        self._history_window._recorder = self._recorder
+        self._history_window._transcriber = self._transcriber
         self._transcription_lock = threading.Lock()
         self._is_recording = False
+        self._is_processing = False
         self._watchdog_stop = threading.Event()
+        self._hide_timer: threading.Timer | None = None
         self._ready = False
 
         db.init_db()
+        db.init_notes_table()
 
         self._hotkey: HotkeyListener | None = None
+        self._translate_mode = config.translate  # RU→EN translation
 
         self._status_item = rumps.MenuItem("⏳ Загрузка модели…")
         self._status_item.set_callback(None)
+        self._lang_ru = rumps.MenuItem(
+            "🇷🇺 Русский", callback=self._select_ru)
+        self._lang_en = rumps.MenuItem(
+            "🇺🇸 English", callback=self._select_en)
+        self._update_lang_checks()
         self.menu = [
             self._status_item,
+            None,
+            self._lang_ru,
+            self._lang_en,
             None,
             rumps.MenuItem("📋 История", callback=self._show_history),
             rumps.MenuItem("Хоткей: Right Option (зажать)"),
@@ -76,20 +90,46 @@ class MenuBarApp(rumps.App):
 
     def _on_activate(self) -> None:
         """Called on main thread when hotkey is pressed."""
-        if not self._ready:
+        if not self._ready or self._is_recording:
+            return
+        if self._history_window._voice_recording:
+            return
+        if self._is_processing:
+            self._overlay.show("Подождите…", state="process")
+            # Reset hotkey toggle — we didn't actually start recording
+            if self._hotkey:
+                self._hotkey.reset_toggle()
             return
         self._is_recording = True
+        self._cancel_auto_hide()  # prevent previous timer from hiding new overlay
         self._feedback.on_record_start()
-        self._recorder.start()
         self.title = ICON_RECORDING
-        self._status_item.title = "🔴 Запись…"
-        self._overlay.show("Запись…", state="record")
+        rec_label = "Запись… → EN" if self._translate_mode else "Запись…"
+        self._status_item.title = f"🔴 {rec_label}"
+        self._overlay.show(rec_label, state="record")
+
+        # Set recording_start_time early so watchdog has a valid baseline
+        # (recorder.start() runs in bg thread and may be slow due to cleanup)
+        self._recorder.recording_start_time = time.monotonic()
+
+        def _start():
+            try:
+                self._recorder.start()
+            except Exception:
+                log.exception("Failed to start recording")
+                self._is_recording = False
+                if self._hotkey:
+                    self._hotkey.reset_toggle()
+                AppKit.NSBeep()
+                self._set_state(ICON_IDLE, "❌ Ошибка записи", "Ошибка", "error")
+                self._auto_hide_overlay(delay=5.0)
+
+        threading.Thread(target=_start, daemon=True).start()
 
         # Safety watchdog — runs in background thread, independent of main thread.
         # Checks every 5 seconds and force-stops if max duration exceeded.
         self._watchdog_stop.clear()
-        t = threading.Thread(target=self._safety_watchdog, daemon=True)
-        t.start()
+        threading.Thread(target=self._safety_watchdog, daemon=True).start()
 
     def _safety_watchdog(self) -> None:
         """Background thread: force-stops recording after max_recording_seconds.
@@ -121,6 +161,7 @@ class MenuBarApp(rumps.App):
         audio = self._recorder.stop()
 
         if len(audio) > 0:
+            self._is_processing = True  # set before spawning worker
             t = threading.Thread(target=self._process, args=(audio,), daemon=True)
             t.start()
 
@@ -136,6 +177,21 @@ class MenuBarApp(rumps.App):
         except Exception:
             pass
 
+    def _on_cancel(self) -> None:
+        """Called on main thread when ESC is pressed during recording."""
+        if not self._is_recording:
+            return
+        self._is_recording = False
+        self._watchdog_stop.set()
+        self._feedback.on_record_stop()
+
+        def _cancel():
+            self._recorder.stop()  # stop recording, discard audio
+            self._set_state(ICON_IDLE, "Готов к записи", "Отменено", "error")
+            self._auto_hide_overlay(delay=2.0)
+
+        threading.Thread(target=_cancel, daemon=True).start()
+
     def _on_deactivate(self) -> None:
         """Called on main thread when hotkey is released."""
         if not self._ready or not self._is_recording:
@@ -144,43 +200,51 @@ class MenuBarApp(rumps.App):
                 self._hotkey.reset_toggle()
             return
         self._is_recording = False
+        self._is_processing = True  # block new recordings immediately
         self._watchdog_stop.set()
         if self._hotkey:
             self._hotkey.reset_toggle()
-        audio = self._recorder.stop()
         self._feedback.on_record_stop()
 
-        if len(audio) == 0:
-            log.warning("No audio captured")
-            self.title = ICON_IDLE
-            self._status_item.title = "Готов к записи"
-            self._overlay.hide()
-            return
-
         self.title = ICON_TRANSCRIBING
-        self._status_item.title = "⏳ Распознавание…"
-        self._overlay.show("Распознавание…", state="process")
+        self._status_item.title = "⏳ Обработка…"
+        self._overlay.show("Обработка…", state="process")
 
-        t = threading.Thread(target=self._process, args=(audio,), daemon=True)
-        t.start()
+        # Stop recorder and process in background — don't block main thread.
+        # Main thread must stay responsive for hotkey events.
+        def _stop_and_process():
+            audio = self._recorder.stop()
+            if len(audio) == 0:
+                log.warning("No audio captured")
+                self._is_processing = False
+                self._set_state(ICON_IDLE, "Готов к записи")
+                return
+            self._set_state(ICON_TRANSCRIBING, "⏳ Распознавание…",
+                            "Распознавание…", "process")
+            self._process(audio)
+
+        threading.Thread(target=_stop_and_process, daemon=True).start()
 
     def _process(self, audio) -> None:
         """Runs in worker thread."""
-        with self._transcription_lock:
-            try:
-                text = self._transcriber.transcribe(audio)
-            except Exception:
-                log.exception("Transcription failed")
-                self._feedback.on_error()
-                self._set_state(ICON_IDLE, "❌ Ошибка распознавания",
-                                "Ошибка", "error")
-                self._auto_hide_overlay()
-                return
+        try:
+            with self._transcription_lock:
+                try:
+                    text = self._transcriber.transcribe(audio)
+                except Exception:
+                    log.exception("Transcription failed")
+                    self._feedback.on_error()
+                    AppKit.NSBeep()
+                    self._set_state(ICON_IDLE, "❌ Ошибка распознавания",
+                                    "Ошибка", "error")
+                    self._auto_hide_overlay(delay=5.0)
+                    return
 
-            if not text:
-                self._set_state(ICON_IDLE, "Готов к записи")
-                return
+                if not text:
+                    self._set_state(ICON_IDLE, "Готов к записи")
+                    return
 
+            # Paste OUTSIDE the lock — paste_text can take up to 5s
             try:
                 paste_text(text)
             except Exception:
@@ -196,22 +260,56 @@ class MenuBarApp(rumps.App):
             self._set_state(ICON_IDLE, f"✅ {text[:40]}…",
                             "Вставлено!", "done")
             self._auto_hide_overlay()
+        finally:
+            self._is_processing = False
 
-    def _auto_hide_overlay(self) -> None:
-        def _hide():
-            import time
-            time.sleep(3.0)
-            AppHelper.callAfter(self._overlay.hide)
-        threading.Thread(target=_hide, daemon=True).start()
+    def _cancel_auto_hide(self) -> None:
+        """Cancel pending auto-hide timer to prevent it from hiding a new overlay."""
+        if self._hide_timer is not None:
+            self._hide_timer.cancel()
+            self._hide_timer = None
+
+    def _auto_hide_overlay(self, delay: float = 3.0) -> None:
+        self._cancel_auto_hide()
+        self._hide_timer = threading.Timer(
+            delay, lambda: AppHelper.callAfter(self._overlay.hide))
+        self._hide_timer.daemon = True
+        self._hide_timer.start()
 
     def _load_model(self) -> None:
         """Runs in background thread."""
         log.info("Starting audio-log-project…")
-        self._config.ensure_model_dir()
-        self._transcriber.load_model()
-        self._ready = True
-        self._set_state(ICON_IDLE, "Готов к записи")
-        log.info("Model loaded. Listening for hotkey…")
+        if self._config.transcription_mode == "api":
+            self._transcriber.load_model()
+            self._ready = True
+            self._set_state(ICON_IDLE, "Готов к записи (API)")
+            log.info("API mode — ready. Listening for hotkey…")
+        else:
+            self._config.ensure_model_dir()
+            self._transcriber.load_model()
+            self._ready = True
+            self._set_state(ICON_IDLE, "Готов к записи")
+            log.info("Model loaded. Listening for hotkey…")
+
+    def _update_lang_checks(self) -> None:
+        self._lang_ru.state = not self._translate_mode
+        self._lang_en.state = self._translate_mode
+
+    def _select_ru(self, _) -> None:
+        if not self._translate_mode:
+            return
+        self._translate_mode = False
+        self._config.translate = False
+        self._update_lang_checks()
+        log.info("Language mode switched to RU")
+
+    def _select_en(self, _) -> None:
+        if self._translate_mode:
+            return
+        self._translate_mode = True
+        self._config.translate = True
+        self._update_lang_checks()
+        log.info("Language mode switched to EN (translate)")
 
     def _show_history(self, _) -> None:
         self._history_window.show()
@@ -254,6 +352,7 @@ class MenuBarApp(rumps.App):
             config=self._config,
             on_activate=self._on_activate,
             on_deactivate=self._on_deactivate,
+            on_cancel=self._on_cancel,
         )
         self._hotkey.start()
 
