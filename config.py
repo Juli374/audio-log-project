@@ -1,7 +1,7 @@
 """Application configuration."""
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -9,7 +9,7 @@ from pathlib import Path
 class Config:
     # Whisper model
     model_name: str = "small"
-    model_dir: str = str(Path(__file__).parent / "models")
+    model_dir: str = ""  # set in __post_init__
     language: str = "ru"
 
     # Audio recording
@@ -44,6 +44,11 @@ class Config:
     # Logging
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+    def __post_init__(self):
+        if not self.model_dir:
+            from utils import resource_path
+            self.model_dir = str(resource_path() / "models")
 
     @property
     def data_dir(self) -> str:

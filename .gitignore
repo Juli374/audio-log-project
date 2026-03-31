@@ -6,3 +6,6 @@ models/
 *.db
 AudioLog.app/
 PasteHelper.app/
+build/
+dist/
+*.egg-info/

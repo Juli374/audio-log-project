@@ -91,7 +91,8 @@ class HistoryWindow:
         self._window.contentView().addSubview_(self._webview)
 
         # Load HTML
-        html_path = Path(__file__).parent / "ui" / "index.html"
+        from utils import resource_path
+        html_path = resource_path() / "ui" / "index.html"
         url = Foundation.NSURL.fileURLWithPath_(str(html_path))
         base_url = Foundation.NSURL.fileURLWithPath_(str(html_path.parent))
         self._webview.loadFileURL_allowingReadAccessToURL_(url, base_url)

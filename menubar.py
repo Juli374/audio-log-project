@@ -325,7 +325,8 @@ class MenuBarApp(rumps.App):
         nsapp.setActivationPolicy_(0)
 
         # Set application icon (overrides default Python icon)
-        icon_path = Path(__file__).parent / "assets" / "AppIcon.icns"
+        from utils import resource_path
+        icon_path = resource_path() / "assets" / "AppIcon.icns"
         if icon_path.exists():
             icon_image = AppKit.NSImage.alloc().initWithContentsOfFile_(
                 str(icon_path)

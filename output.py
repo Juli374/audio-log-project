@@ -9,10 +9,9 @@ from utils import get_logger
 
 log = get_logger(__name__)
 
-_PASTE_HELPER_APP = os.path.join(
-    os.path.dirname(__file__),
-    "PasteHelper.app",
-)
+def _paste_helper_path():
+    from utils import resource_path
+    return str(resource_path() / "PasteHelper.app")
 
 
 def _copy_to_clipboard(text):
@@ -39,7 +38,7 @@ def paste_text(text):
     #    -n = new instance, -W = wait for exit, -g = don't steal focus
     try:
         result = subprocess.run(
-            ["open", "-n", "-W", "-g", "-a", _PASTE_HELPER_APP, "--args", text],
+            ["open", "-n", "-W", "-g", "-a", _paste_helper_path(), "--args", text],
             timeout=5, capture_output=True,
         )
         stderr_out = result.stderr.decode().strip()

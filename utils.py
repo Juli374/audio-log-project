@@ -1,4 +1,4 @@
-"""Logging setup."""
+"""Logging setup and utilities."""
 
 import logging
 import sys
@@ -6,6 +6,14 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from config import Config
+
+
+def resource_path() -> Path:
+    """Return path to bundled resources (py2app) or project root (dev)."""
+    if getattr(sys, 'frozen', False):
+        # Running inside py2app .app bundle
+        return Path(sys.executable).parent.parent / "Resources"
+    return Path(__file__).parent
 
 LOG_DIR = Path.home() / "Library" / "Logs" / "audio-log"
 LOG_FILE = LOG_DIR / "app.log"
