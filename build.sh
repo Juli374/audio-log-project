@@ -16,31 +16,9 @@ source .venv/bin/activate
 # 2. Install py2app
 pip install py2app -q
 
-# 3. Ensure PasteHelper.app is built
-PASTE_APP="$SCRIPT_DIR/PasteHelper.app/Contents/MacOS/PasteHelper"
-if [ ! -f "$PASTE_APP" ]; then
-    echo "Building PasteHelper.app…"
-    mkdir -p "$SCRIPT_DIR/PasteHelper.app/Contents/MacOS"
-    cat > "$SCRIPT_DIR/PasteHelper.app/Contents/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>PasteHelper</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.audiolog.paste-helper</string>
-    <key>CFBundleName</key>
-    <string>PasteHelper</string>
-    <key>LSUIElement</key>
-    <true/>
-</dict>
-</plist>
-PLIST
-    swiftc "$SCRIPT_DIR/PasteHelper.swift" -o "$PASTE_APP"
-    echo "PasteHelper built"
-fi
+# 3. (PasteHelper is no longer needed — AudioLog does Cmd+V via Quartz directly.
+#    The standalone PasteHelper.app in the repo is kept as a historical artifact
+#    but isn't bundled anymore. See output.py.)
 
 # 4. Clean previous build
 rm -rf build dist
@@ -49,7 +27,25 @@ rm -rf build dist
 echo "Running py2app…"
 python setup.py py2app 2>&1 | tail -5
 
-# 6. Verify
+# 6. Sign with a stable local identity so the CDHash changes across rebuilds
+#    but the cert identity stays the same — TCC attributes Accessibility
+#    by cert identity, so the user's approval persists across rebuilds.
+#    Identity name comes from $CODESIGN_IDENTITY or defaults to "AudioLog Dev Local".
+IDENTITY="${CODESIGN_IDENTITY:-AudioLog Dev Local}"
+if security find-identity -v -p codesigning 2>&1 | grep -q "\"$IDENTITY\""; then
+    echo "Signing with \"$IDENTITY\"…"
+    codesign --force --deep --sign "$IDENTITY" \
+        --options runtime \
+        "dist/AudioLog.app" 2>&1 | tail -3
+    codesign -dv --verbose=2 "dist/AudioLog.app" 2>&1 \
+        | grep -E "^(CDHash|Authority|TeamIdent)" | head -3
+else
+    echo "⚠  Identity \"$IDENTITY\" not found in keychain — staying adhoc."
+    echo "   Accessibility approval will NOT persist across rebuilds."
+    echo "   Run tools/create-dev-cert.sh to set up a stable signing identity."
+fi
+
+# 7. Verify
 APP_PATH="dist/AudioLog.app"
 if [ -d "$APP_PATH" ]; then
     SIZE=$(du -sh "$APP_PATH" | cut -f1)
@@ -64,10 +60,10 @@ else
     exit 1
 fi
 
-# 7. Optional: create DMG
+# 8. Optional: create DMG
 if [ "${1:-}" = "dmg" ]; then
-    DMG_NAME="AudioLog-1.1.0.dmg"
-    echo "Creating $DMG_NAME…"
+    DMG_NAME="AudioLog-1.2.1.dmg"
+    echo "Creating ${DMG_NAME}…"
     rm -f "dist/$DMG_NAME"
     hdiutil create -volname "AudioLog" \
         -srcfolder "dist/AudioLog.app" \

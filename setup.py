@@ -22,7 +22,9 @@ OPTIONS = {
         'menubar',
         'app',
         'recorder',
+        'session_recorder',
         'transcriber',
+        'long_transcriber',
         'hotkey',
         'output',
         'overlay',
@@ -35,8 +37,8 @@ OPTIONS = {
         'CFBundleIdentifier': 'com.audiolog.app',
         'CFBundleName': 'AudioLog',
         'CFBundleDisplayName': 'AudioLog',
-        'CFBundleVersion': '1.1.0',
-        'CFBundleShortVersionString': '1.1.0',
+        'CFBundleVersion': '1.2.1',
+        'CFBundleShortVersionString': '1.2.1',
         'LSUIElement': False,  # Show in Dock (app sets policy at runtime)
         'NSMicrophoneUsageDescription': 'AudioLog needs microphone access for voice dictation.',
         'NSAppleEventsUsageDescription': 'AudioLog needs accessibility for text insertion.',
@@ -45,13 +47,12 @@ OPTIONS = {
     'resources': [
         'assets',
         'ui',
-        'PasteHelper.app',
     ],
 }
 
 setup(
     name='AudioLog',
-    version='1.1.0',
+    version='1.2.1',
     app=APP,
     options={'py2app': OPTIONS},
     setup_requires=['py2app'],

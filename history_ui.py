@@ -48,6 +48,8 @@ class HistoryWindow:
         self._built = False
         self._recorder = None
         self._transcriber = None
+        self._long_transcriber = None  # set by MenuBarApp after SessionController is built
+        self._hotkey_listener = None   # set by MenuBarApp after listener.start()
         self._voice_recording = False
         self._voice_target = None  # 'note' or 'task'
 
@@ -125,6 +127,57 @@ class HistoryWindow:
                 self._eval_js("app.onNewEntry()")
         AppHelper.callAfter(_do)
 
+    def notify_session_update(self) -> None:
+        """Notify the webview about a session state/progress change.
+
+        Safe to call from any thread. The JS handler re-fetches the
+        sessions list; if the sessions tab isn't active, it's a no-op."""
+        def _do():
+            if self._webview and self._window and self._window.isVisible():
+                self._eval_js(
+                    "if (window.app && app.onSessionUpdate) "
+                    "{ app.onSessionUpdate(); }")
+        AppHelper.callAfter(_do)
+
+    def _retry_session_worker(self, sid: int) -> None:
+        """Re-run transcription on an existing session. Background thread."""
+        if self._long_transcriber is None:
+            log.error("No LongTranscriber available — retry skipped")
+            db.session_set_status(sid, "error",
+                                  error="Transcriber not ready")
+            self.notify_session_update()
+            return
+
+        row = db.session_get(sid)
+        if not row or not row.get("audio_path"):
+            log.warning("Retry: session %d not found or has no audio_path", sid)
+            return
+
+        audio_path = Path(row["audio_path"])
+        if not audio_path.exists():
+            db.session_set_status(sid, "error", error="Audio file missing")
+            self.notify_session_update()
+            return
+
+        db.session_set_status(sid, "transcribing")
+        db.session_set_progress(sid, 0, 0)
+        self.notify_session_update()
+
+        try:
+            def progress(done: int, total: int) -> None:
+                db.session_set_progress(sid, done, total)
+                self.notify_session_update()
+
+            text = self._long_transcriber.transcribe_file(
+                audio_path, progress_cb=progress)
+            db.session_set_text(sid, text)
+            log.info("Session %d retry complete: %d chars", sid, len(text))
+        except Exception:
+            log.exception("Session %d retry failed", sid)
+            db.session_set_status(sid, "error",
+                                  error="Retry failed — see logs")
+        self.notify_session_update()
+
     def _eval_js(self, js: str) -> None:
         """Run JS in the webview."""
         if self._webview:
@@ -187,17 +240,51 @@ class HistoryWindow:
             self._send_response({"action": "settings", "data": settings})
 
         elif action == "save_settings":
+            from hotkey import MODIFIER_KEY_FLAGS
+
+            short_kc = int(data.get(
+                "hotkey_keycode", self._config.hotkey_keycode))
+            long_kc = int(data.get(
+                "session_hotkey_keycode",
+                self._config.session_hotkey_keycode))
+            # Reject unknown / conflicting keycodes — fall back silently
+            # to current values rather than corrupting state.
+            if short_kc not in MODIFIER_KEY_FLAGS:
+                short_kc = self._config.hotkey_keycode
+            if long_kc not in MODIFIER_KEY_FLAGS:
+                long_kc = self._config.session_hotkey_keycode
+            if short_kc == long_kc:
+                self._send_response({
+                    "action": "settings_error",
+                    "error": "hotkey_conflict",
+                    "message": "Клавиша записи и сессии должны отличаться"})
+                return
+
             settings = {
                 "model": str(data.get("model", "small")),
                 "language": str(data.get("language", "ru")),
                 "n_threads": int(data.get("n_threads", 4)),
                 "max_recording_seconds": int(data.get("max_recording_seconds", 300)),
                 "hotkey_mode": str(data.get("hotkey_mode", "hold")),
+                "hotkey_keycode": short_kc,
+                "session_hotkey_keycode": long_kc,
                 "transcription_mode": str(data.get("transcription_mode", "local")),
                 "openai_api_key": str(data.get("openai_api_key", "")),
                 "openai_model": str(data.get("openai_model", "gpt-4o-mini-transcribe")),
+                "groq_api_key": str(data.get("groq_api_key", "")),
+                "groq_model": str(data.get("groq_model", "whisper-large-v3-turbo")),
+                "anthropic_api_key": str(data.get("anthropic_api_key", "")),
+                "cleanup_mode": str(data.get("cleanup_mode", "off")),
+                "target_language": str(data.get("target_language", "")),
             }
             self._config.save_settings(settings)
+            # Live-apply hotkey changes — no restart needed.
+            if self._hotkey_listener is not None:
+                try:
+                    self._hotkey_listener.set_keycode(short_kc)
+                    self._hotkey_listener.set_long_keycode(long_kc)
+                except Exception:
+                    log.exception("Failed to live-apply hotkey changes")
             self._send_response({"action": "settings_saved"})
 
         elif action == "test_api":
@@ -213,6 +300,20 @@ class HistoryWindow:
                 AppHelper.callAfter(_respond)
 
             threading.Thread(target=_test, daemon=True).start()
+
+        elif action == "test_groq":
+            import threading
+            api_key = str(data.get("api_key", ""))
+            model = str(data.get("model", "whisper-large-v3-turbo"))
+
+            def _test_groq():
+                from transcriber import test_groq_connection
+                result = test_groq_connection(api_key, model)
+                def _respond():
+                    self._send_response({"action": "test_groq_result", **result})
+                AppHelper.callAfter(_respond)
+
+            threading.Thread(target=_test_groq, daemon=True).start()
 
         # --- Заметки ---
         elif action == "save_note":
@@ -313,6 +414,77 @@ class HistoryWindow:
                         self._send_response({"action": "voice_error", "error": "mic"})
                     AppHelper.callAfter(_err)
             threading.Thread(target=_start, daemon=True).start()
+
+        # --- Long sessions ---
+        elif action == "get_sessions":
+            limit = int(data.get("limit", 50))
+            offset = int(data.get("offset", 0))
+            rows = db.session_list(limit, offset)
+            self._send_response({
+                "action": "sessions",
+                "data": rows,
+                "append": offset > 0,
+            })
+
+        elif action == "search_sessions":
+            query = str(data.get("query", ""))
+            limit = int(data.get("limit", 50))
+            offset = int(data.get("offset", 0))
+            rows = db.session_search(query, limit, offset)
+            self._send_response({
+                "action": "sessions",
+                "data": rows,
+                "append": offset > 0,
+            })
+
+        elif action == "get_session_detail":
+            sid = int(data.get("id", 0))
+            row = db.session_get(sid)
+            self._send_response({"action": "session_detail", "data": row})
+
+        elif action == "delete_session":
+            sid = int(data.get("id", 0))
+            row = db.session_get(sid)
+            if row and row.get("audio_path"):
+                try:
+                    Path(row["audio_path"]).unlink(missing_ok=True)
+                except Exception:
+                    log.exception("Failed to delete session WAV")
+            db.session_delete(sid)
+            self._send_response({"action": "session_deleted", "id": sid})
+
+        elif action == "delete_session_audio":
+            sid = int(data.get("id", 0))
+            row = db.session_get(sid)
+            if row and row.get("audio_path"):
+                try:
+                    Path(row["audio_path"]).unlink(missing_ok=True)
+                    self._send_response({
+                        "action": "session_audio_deleted", "id": sid})
+                except Exception:
+                    log.exception("Failed to delete WAV")
+                    self._send_response({
+                        "action": "session_audio_delete_error", "id": sid})
+            else:
+                self._send_response({
+                    "action": "session_audio_delete_error", "id": sid})
+
+        elif action == "retry_session":
+            sid = int(data.get("id", 0))
+            import threading as _th
+            _th.Thread(
+                target=self._retry_session_worker,
+                args=(sid,), daemon=True,
+                name="session-retry",
+            ).start()
+            self._send_response({"action": "session_retry_started", "id": sid})
+
+        elif action == "update_session_text":
+            sid = int(data.get("id", 0))
+            text = str(data.get("text", ""))
+            db.session_set_text(sid, text)
+            self._send_response({
+                "action": "session_text_updated", "id": sid, "text": text})
 
         elif action == "stop_voice":
             if not self._voice_recording:

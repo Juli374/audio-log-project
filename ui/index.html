@@ -244,6 +244,134 @@ body {
     color: #fff;
 }
 
+/* Sessions */
+.sessions-header {
+    padding: 14px 20px 0;
+}
+.sessions-hint {
+    font-size: 12px;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    padding: 10px 14px;
+    border-radius: 9px;
+    margin-bottom: 10px;
+}
+.session-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.12s;
+    cursor: pointer;
+}
+.session-card:hover {
+    background: var(--bg-secondary);
+}
+.session-icon {
+    font-size: 22px;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-top: 2px;
+    width: 28px;
+    text-align: center;
+}
+.session-body {
+    flex: 1;
+    min-width: 0;
+}
+.session-title {
+    font-size: 13px;
+    color: var(--text);
+    font-weight: 500;
+    margin-bottom: 3px;
+}
+.session-meta {
+    font-size: 11px;
+    color: var(--text-secondary);
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.session-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+}
+.session-status.status-recording   { background: rgba(255,59,48,0.12);  color: #ff3b30; }
+.session-status.status-transcribing { background: rgba(10,132,255,0.12); color: var(--accent); }
+.session-status.status-done        { background: rgba(48,209,88,0.12);  color: var(--success); }
+.session-status.status-error       { background: rgba(255,59,48,0.12);  color: #ff3b30; }
+.session-status.status-cancelled   { background: var(--bg-secondary);   color: var(--text-secondary); }
+.session-preview {
+    font-size: 13px;
+    color: var(--text);
+    opacity: 0.85;
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 3.6em;
+    overflow: hidden;
+    position: relative;
+}
+.session-progress-bar {
+    height: 4px;
+    background: var(--bg-secondary);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+}
+.session-progress-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
+}
+.session-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+.session-card:hover .session-actions {
+    opacity: 1;
+}
+.session-actions button {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+}
+.session-actions button:hover {
+    background: var(--bg-secondary);
+    color: var(--text);
+}
+.session-actions button.danger:hover {
+    background: var(--danger);
+    color: #fff;
+}
+.session-error-msg {
+    font-size: 11px;
+    color: var(--danger);
+    margin-top: 4px;
+    font-family: -apple-system-mono, ui-monospace, monospace;
+}
+
 /* Detail modal */
 .detail-overlay {
     display: none;
@@ -768,6 +896,7 @@ body {
             <button class="tab" data-tab="notes" onclick="app.switchTab('notes')">Идеи</button>
             <button class="tab active" data-tab="diary" onclick="app.switchTab('diary')">Дневник</button>
             <button class="tab" data-tab="tasks" onclick="app.switchTab('tasks')">Задачи</button>
+            <button class="tab" data-tab="sessions" onclick="app.switchTab('sessions')">Сессии</button>
             <button class="tab" data-tab="history" onclick="app.switchTab('history')">История</button>
             <button class="tab tab-settings" data-tab="settings" onclick="app.switchTab('settings')">&#x2699;</button>
         </div>
@@ -840,14 +969,23 @@ body {
     <div class="task-list" id="taskList"></div>
 </div>
 
+<!-- ═══ Sessions ═══ -->
+<div class="page" id="sessionsPage">
+    <div class="sessions-header">
+        <div class="sessions-hint">📼 Двойной тап Left Option — начать/остановить длинную запись</div>
+    </div>
+    <div class="entries" id="sessionsList"></div>
+</div>
+
 <!-- ═══ Settings ═══ -->
 <div class="settings-page" id="settingsPage">
     <div class="setting-group">
         <div class="setting-label">Режим транскрипции</div>
-        <div class="setting-description">Локальная модель работает офлайн, API требует интернет и ключ OpenAI</div>
+        <div class="setting-description">Локальная модель работает офлайн, API требует интернет и ключ</div>
         <select class="setting-select" id="settingTranscriptionMode" onchange="app.onTranscriptionModeChange()">
             <option value="local">Локальная модель (Whisper)</option>
             <option value="api">OpenAI API</option>
+            <option value="groq">Groq API (быстрый)</option>
         </select>
     </div>
 
@@ -891,12 +1029,58 @@ body {
         </div>
     </div>
 
+    <!-- Groq settings -->
+    <div id="groqSettings" style="display: none;">
+        <div class="setting-group">
+            <div class="setting-label">API ключ Groq</div>
+            <div class="setting-description">Получите ключ на console.groq.com/keys (есть бесплатный тариф)</div>
+            <input class="setting-input" type="password" id="settingGroqKey" placeholder="gsk_..." autocomplete="off">
+        </div>
+        <div class="setting-group">
+            <div class="setting-label">Модель Groq</div>
+            <div class="setting-description">Whisper на Groq LPU — в ~10x быстрее OpenAI, $0.011/мин</div>
+            <select class="setting-select" id="settingGroqModel">
+                <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo (рекомендуемая)</option>
+                <option value="whisper-large-v3">Whisper Large V3 (макс. качество)</option>
+            </select>
+        </div>
+        <div class="setting-group">
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="testGroqBtn" onclick="app.testGroq()">Тест подключения</button>
+            <span id="testGroqResult" style="margin-left: 10px; font-size: 13px;"></span>
+        </div>
+    </div>
+
     <div class="setting-group">
         <div class="setting-label">Язык</div>
         <div class="setting-description">Язык распознавания</div>
         <select class="setting-select" id="settingLanguage">
             <option value="ru">Русский</option>
             <option value="en">English</option>
+            <option value="uk">Українська</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Anthropic API ключ</div>
+        <div class="setting-description">Нужен для перевода и/или корректировки пунктуации через Claude. Получить: console.anthropic.com</div>
+        <input class="setting-input" type="password" id="settingAnthropicKey" placeholder="sk-ant-..." autocomplete="off">
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Корректировка через Claude</div>
+        <div class="setting-description">Только короткая диктовка. Лёгкая — пунктуация и явные ошибки, слова не трогает. Полная — заменяет неподходящие слова и чинит грамматику для итогового корректного текста. Длинные сессии не задеваются.</div>
+        <select class="setting-select" id="settingCleanupMode">
+            <option value="off">Выключено</option>
+            <option value="light">Лёгкая — только пунктуация и явные ошибки</option>
+            <option value="aggressive">Полная — корректирует слова и грамматику</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Перевод через Claude</div>
+        <div class="setting-description">Постобработка транскрипта: перевод на выбранный язык через Anthropic API. Если совпадает с языком распознавания — перевод пропускается.</div>
+        <select class="setting-select" id="settingTargetLanguage">
+            <option value="">Без перевода</option>
+            <option value="en">На английский</option>
+            <option value="ru">На русский</option>
+            <option value="uk">На украинский</option>
         </select>
     </div>
     <div class="setting-group">
@@ -905,6 +1089,34 @@ body {
         <select class="setting-select" id="settingHotkeyMode">
             <option value="hold">Зажать (удерживать)</option>
             <option value="toggle">Нажать (вкл/выкл)</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Клавиша записи (короткая диктовка)</div>
+        <div class="setting-description">Применяется сразу после сохранения, без перезапуска</div>
+        <select class="setting-select" id="settingHotkeyKeycode">
+            <option value="61">Right ⌥ (Option)</option>
+            <option value="58">Left ⌥ (Option)</option>
+            <option value="54">Right ⌘ (Command)</option>
+            <option value="55">Left ⌘ (Command)</option>
+            <option value="62">Right ⌃ (Control)</option>
+            <option value="59">Left ⌃ (Control)</option>
+            <option value="60">Right ⇧ (Shift)</option>
+            <option value="56">Left ⇧ (Shift)</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Клавиша сессии (длинная запись)</div>
+        <div class="setting-description">Двойной тап выбранной клавиши запускает/останавливает сессию. Должна отличаться от клавиши записи</div>
+        <select class="setting-select" id="settingSessionHotkeyKeycode">
+            <option value="58">Left ⌥ (Option)</option>
+            <option value="61">Right ⌥ (Option)</option>
+            <option value="55">Left ⌘ (Command)</option>
+            <option value="54">Right ⌘ (Command)</option>
+            <option value="59">Left ⌃ (Control)</option>
+            <option value="62">Right ⌃ (Control)</option>
+            <option value="56">Left ⇧ (Shift)</option>
+            <option value="60">Right ⇧ (Shift)</option>
         </select>
     </div>
     <div class="setting-group">
@@ -953,6 +1165,11 @@ const app = {
     notesData: [],
     notesOffset: 0,
     notesHasMore: true,
+
+    // Sessions state
+    sessionsData: [],
+    sessionsOffset: 0,
+    sessionsHasMore: true,
 
     // Voice recording state
     voiceRecording: false,
@@ -1011,6 +1228,9 @@ const app = {
             case 'test_api_result':
                 this.onTestApiResult(response);
                 break;
+            case 'test_groq_result':
+                this.onTestGroqResult(response);
+                break;
             // Notes
             case 'notes':
                 this.renderNotes(response.data, response.append);
@@ -1056,6 +1276,29 @@ const app = {
             case 'note_updated':
                 this.onNoteUpdated(response.id, response.text);
                 break;
+            // Sessions
+            case 'sessions':
+                this.renderSessions(response.data, response.append);
+                break;
+            case 'session_detail':
+                this.onSessionDetail(response.data);
+                break;
+            case 'session_deleted':
+                this.removeSessionEl(response.id);
+                break;
+            case 'session_retry_started':
+                this.showToast('Повтор транскрибации…');
+                break;
+            case 'session_text_updated':
+                this.onSessionTextUpdated(response.id, response.text);
+                break;
+            case 'session_audio_deleted':
+                this.showToast('Аудио удалено');
+                this.loadSessions();
+                break;
+            case 'session_audio_delete_error':
+                this.showToast('Не удалось удалить аудио');
+                break;
             case 'task_updated':
                 this.onTaskUpdated(response.id, response.text);
                 break;
@@ -1075,11 +1318,12 @@ const app = {
         document.getElementById('notesPage').classList.remove('active');
         document.getElementById('diaryPage').classList.remove('active');
         document.getElementById('tasksPage').classList.remove('active');
+        document.getElementById('sessionsPage').classList.remove('active');
         document.getElementById('settingsPage').classList.remove('active');
 
-        // Show search box only for history and notes
+        // Show search box for history, notes, sessions
         const searchBox = document.getElementById('searchBox');
-        searchBox.style.display = (tab === 'history' || tab === 'notes') ? '' : 'none';
+        searchBox.style.display = (tab === 'history' || tab === 'notes' || tab === 'sessions') ? '' : 'none';
 
         if (tab === 'history') {
             document.getElementById('historyPage').classList.remove('hidden');
@@ -1095,6 +1339,10 @@ const app = {
         } else if (tab === 'tasks') {
             document.getElementById('tasksPage').classList.add('active');
             this.loadTasks();
+        } else if (tab === 'sessions') {
+            document.getElementById('sessionsPage').classList.add('active');
+            document.getElementById('searchInput').placeholder = 'Поиск по сессиям…';
+            this.loadSessions();
         } else if (tab === 'settings') {
             document.getElementById('settingsPage').classList.add('active');
         }
@@ -1218,6 +1466,13 @@ const app = {
                 this.send('search_notes', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
             } else {
                 this.send('get_notes', { limit: this.PAGE_SIZE, offset: 0 });
+            }
+        } else if (this.currentTab === 'sessions') {
+            this.sessionsOffset = 0;
+            if (this.query) {
+                this.send('search_sessions', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
+            } else {
+                this.send('get_sessions', { limit: this.PAGE_SIZE, offset: 0 });
             }
         } else {
             this.offset = 0;
@@ -1538,23 +1793,45 @@ const app = {
         document.getElementById('settingLanguage').value = s.language || 'ru';
         document.getElementById('settingThreads').value = s.n_threads || 4;
         document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
+        document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
+        document.getElementById('settingSessionHotkeyKeycode').value = String(s.session_hotkey_keycode ?? 58);
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
         document.getElementById('settingTranscriptionMode').value = s.transcription_mode || 'local';
         document.getElementById('settingApiKey').value = s.openai_api_key || '';
         document.getElementById('settingApiModel').value = s.openai_model || 'gpt-4o-mini-transcribe';
+        document.getElementById('settingGroqKey').value = s.groq_api_key || '';
+        document.getElementById('settingGroqModel').value = s.groq_model || 'whisper-large-v3-turbo';
+        document.getElementById('settingAnthropicKey').value = s.anthropic_api_key || '';
+        // Backward compat: old cleanup_enabled boolean → "light" mode if true.
+        const mode = s.cleanup_mode || (s.cleanup_enabled ? 'light' : 'off');
+        document.getElementById('settingCleanupMode').value = mode;
+        document.getElementById('settingTargetLanguage').value = s.target_language || '';
         this.onTranscriptionModeChange();
     },
 
     saveSettings() {
+        const shortKc = parseInt(document.getElementById('settingHotkeyKeycode').value) || 61;
+        const longKc = parseInt(document.getElementById('settingSessionHotkeyKeycode').value) || 58;
+        if (shortKc === longKc) {
+            this.showToast('Клавиша записи и сессии должны отличаться');
+            return;
+        }
         const s = {
             model: document.getElementById('settingModel').value,
             language: document.getElementById('settingLanguage').value,
             n_threads: parseInt(document.getElementById('settingThreads').value) || 4,
             hotkey_mode: document.getElementById('settingHotkeyMode').value,
+            hotkey_keycode: shortKc,
+            session_hotkey_keycode: longKc,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
             transcription_mode: document.getElementById('settingTranscriptionMode').value,
             openai_api_key: document.getElementById('settingApiKey').value,
             openai_model: document.getElementById('settingApiModel').value,
+            groq_api_key: document.getElementById('settingGroqKey').value,
+            groq_model: document.getElementById('settingGroqModel').value,
+            anthropic_api_key: document.getElementById('settingAnthropicKey').value,
+            cleanup_mode: document.getElementById('settingCleanupMode').value,
+            target_language: document.getElementById('settingTargetLanguage').value,
         };
         this.send('save_settings', s);
     },
@@ -1563,6 +1840,7 @@ const app = {
         const mode = document.getElementById('settingTranscriptionMode').value;
         document.getElementById('localSettings').style.display = mode === 'local' ? '' : 'none';
         document.getElementById('apiSettings').style.display = mode === 'api' ? '' : 'none';
+        document.getElementById('groqSettings').style.display = mode === 'groq' ? '' : 'none';
     },
 
     testApi() {
@@ -1587,6 +1865,40 @@ const app = {
     onTestApiResult(response) {
         const btn = document.getElementById('testApiBtn');
         const result = document.getElementById('testApiResult');
+        btn.disabled = false;
+        btn.textContent = 'Тест подключения';
+
+        if (response.success) {
+            result.textContent = 'Подключение успешно';
+            result.style.color = '#30d158';
+        } else {
+            result.textContent = response.error || 'Ошибка подключения';
+            result.style.color = 'var(--danger)';
+        }
+    },
+
+    testGroq() {
+        const btn = document.getElementById('testGroqBtn');
+        const result = document.getElementById('testGroqResult');
+        const key = document.getElementById('settingGroqKey').value;
+        const model = document.getElementById('settingGroqModel').value;
+
+        if (!key) {
+            result.textContent = 'Введите API ключ';
+            result.style.color = 'var(--danger)';
+            return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = 'Проверка…';
+        result.textContent = '';
+
+        this.send('test_groq', { api_key: key, model: model });
+    },
+
+    onTestGroqResult(response) {
+        const btn = document.getElementById('testGroqBtn');
+        const result = document.getElementById('testGroqResult');
         btn.disabled = false;
         btn.textContent = 'Тест подключения';
 
@@ -1645,6 +1957,8 @@ const app = {
             this.send('update_note', { id, text });
         } else if (type === 'task') {
             this.send('update_task', { id, text });
+        } else if (type === 'session') {
+            this.send('update_session_text', { id, text });
         }
         this.detailOriginal = text;
         document.getElementById('detailSaveBtn').classList.remove('visible');
@@ -1713,6 +2027,214 @@ const app = {
         document.getElementById('searchInput').value = '';
         this.send('get_stats');
         this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
+    },
+
+    // ─── Sessions ───
+
+    loadSessions() {
+        this.sessionsOffset = 0;
+        if (this.query && this.currentTab === 'sessions') {
+            this.send('search_sessions', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
+        } else {
+            this.send('get_sessions', { limit: this.PAGE_SIZE, offset: 0 });
+        }
+    },
+
+    // Called from Python when session state/progress changes
+    onSessionUpdate() {
+        // Only reload if sessions tab is active; otherwise it's a no-op
+        if (this.currentTab === 'sessions') {
+            this.loadSessions();
+        }
+    },
+
+    renderSessions(data, append) {
+        const list = document.getElementById('sessionsList');
+
+        if (!append) {
+            this.sessionsData = [];
+            this.sessionsOffset = 0;
+            list.innerHTML = '';
+        }
+
+        this.sessionsData = this.sessionsData.concat(data);
+        this.sessionsOffset += data.length;
+        this.sessionsHasMore = data.length >= this.PAGE_SIZE;
+
+        if (this.sessionsData.length === 0 && !append) {
+            list.innerHTML = '<div class="empty"><div class="empty-icon">📼</div>' +
+                '<div class="empty-text">' +
+                (this.query ? 'Ничего не найдено' : 'Нет сессий — двойной тап Left Option чтобы начать') +
+                '</div></div>';
+            return;
+        }
+
+        data.forEach(s => list.appendChild(this.createSessionEl(s)));
+
+        const oldBtn = list.querySelector('.load-more');
+        if (oldBtn) oldBtn.remove();
+
+        if (this.sessionsHasMore) {
+            const btn = document.createElement('button');
+            btn.className = 'load-more';
+            btn.textContent = 'Загрузить ещё';
+            btn.onclick = () => this.send('get_sessions',
+                { limit: this.PAGE_SIZE, offset: this.sessionsOffset });
+            list.appendChild(btn);
+        }
+    },
+
+    createSessionEl(s) {
+        const el = document.createElement('div');
+        el.className = 'session-card';
+        el.dataset.id = s.id;
+
+        const statusLabel = {
+            recording:    '🔴 Запись',
+            transcribing: '⚙️ Обработка',
+            done:         '✓ Готово',
+            error:        '✗ Ошибка',
+            cancelled:    '— Отменено',
+        }[s.status] || s.status;
+
+        const icon = s.status === 'recording' ? '🔴'
+                   : s.status === 'transcribing' ? '⚙️'
+                   : s.status === 'error' ? '❌'
+                   : s.status === 'cancelled' ? '✕'
+                   : '📼';
+
+        const duration = this.formatSessionDuration(s.duration_sec || 0);
+        const hasText = s.status === 'done' && s.text && s.text.length > 0;
+        const preview = hasText ? s.text.substring(0, 240) : '';
+
+        let progressBar = '';
+        if (s.status === 'transcribing' && s.chunk_count > 0) {
+            const pct = Math.round((s.chunks_done || 0) / s.chunk_count * 100);
+            progressBar =
+                '<div class="session-meta">Чанк ' + (s.chunks_done || 0) +
+                '/' + s.chunk_count + ' (' + pct + '%)</div>' +
+                '<div class="session-progress-bar">' +
+                '<div class="session-progress-fill" style="width:' + pct + '%"></div></div>';
+        }
+
+        let errorBlock = '';
+        if (s.status === 'error' && s.error) {
+            errorBlock = '<div class="session-error-msg">' + this.escapeHtml(s.error) + '</div>';
+        }
+
+        // Build actions based on status
+        let actions = '';
+        if (s.status === 'done') {
+            actions =
+                '<button title="Копировать текст" data-action="copy">⎘</button>' +
+                '<button title="Повторить" data-action="retry">↻</button>' +
+                '<button title="Удалить" class="danger" data-action="delete">&#x2715;</button>';
+        } else if (s.status === 'error') {
+            actions =
+                '<button title="Повторить" data-action="retry">↻</button>' +
+                '<button title="Удалить" class="danger" data-action="delete">&#x2715;</button>';
+        } else if (s.status === 'cancelled') {
+            actions =
+                '<button title="Удалить" class="danger" data-action="delete">&#x2715;</button>';
+        } else if (s.status === 'transcribing' || s.status === 'recording') {
+            // No actions while in progress
+            actions = '';
+        }
+
+        el.innerHTML =
+            '<div class="session-icon">' + icon + '</div>' +
+            '<div class="session-body">' +
+                '<div class="session-title">' + this.formatTime(s.started_at) +
+                    ' • ' + duration + '</div>' +
+                '<div class="session-meta">' +
+                    '<span class="session-status status-' + s.status + '">' +
+                        statusLabel + '</span>' +
+                '</div>' +
+                progressBar +
+                (preview ? '<div class="session-preview">' + this.escapeHtml(preview) +
+                    (s.text.length > 240 ? '…' : '') + '</div>' : '') +
+                errorBlock +
+            '</div>' +
+            '<div class="session-actions">' + actions + '</div>';
+
+        // Click card → open detail (only if there's text or error)
+        el.addEventListener('click', (e) => {
+            if (e.target.closest('.session-actions')) return;
+            if (s.status === 'done' || s.status === 'error') {
+                this.openSessionDetail(s.id);
+            }
+        });
+
+        // Action buttons
+        el.querySelectorAll('.session-actions button').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                if (action === 'copy' && s.text) {
+                    this.send('copy_to_clipboard', { text: s.text });
+                } else if (action === 'retry') {
+                    this.send('retry_session', { id: s.id });
+                } else if (action === 'delete') {
+                    if (confirm('Удалить сессию и WAV-файл?')) {
+                        this.send('delete_session', { id: s.id });
+                    }
+                }
+            });
+        });
+
+        return el;
+    },
+
+    removeSessionEl(id) {
+        this.sessionsData = this.sessionsData.filter(s => s.id !== id);
+        const el = document.querySelector(`#sessionsList .session-card[data-id="${id}"]`);
+        if (el) {
+            el.style.opacity = '0';
+            el.style.transform = 'translateX(-20px)';
+            el.style.transition = 'all 0.25s';
+            setTimeout(() => el.remove(), 250);
+        }
+    },
+
+    openSessionDetail(id) {
+        this.send('get_session_detail', { id });
+    },
+
+    onSessionDetail(row) {
+        if (!row) return;
+        // Reuse the existing detail modal — store as session type so save updates the session
+        this.detailItem = { id: row.id, text: row.text || '', type: 'session' };
+        this.detailOriginal = row.text || '';
+        document.getElementById('detailTime').textContent =
+            this.formatTime(row.started_at) + ' • ' +
+            this.formatSessionDuration(row.duration_sec || 0);
+        const ta = document.getElementById('detailText');
+        ta.value = row.text || (row.error ? '[Ошибка: ' + row.error + ']' : '');
+        ta.style.height = 'auto';
+        document.getElementById('detailSaveBtn').classList.remove('visible');
+        document.getElementById('detailOverlay').classList.add('open');
+        setTimeout(() => {
+            ta.style.height = ta.scrollHeight + 'px';
+            ta.focus();
+        }, 50);
+    },
+
+    onSessionTextUpdated(id, text) {
+        const s = this.sessionsData.find(x => x.id === id);
+        if (s) s.text = text;
+        // Re-render preview if visible
+        const el = document.querySelector(`#sessionsList .session-card[data-id="${id}"] .session-preview`);
+        if (el) el.textContent = text.substring(0, 240) + (text.length > 240 ? '…' : '');
+    },
+
+    formatSessionDuration(sec) {
+        sec = Math.round(sec);
+        if (sec < 60) return sec + ' сек';
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        const s = sec % 60;
+        if (h > 0) return h + ' ч ' + m + ' мин';
+        return m + ' мин ' + s + ' сек';
     }
 };
 

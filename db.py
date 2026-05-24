@@ -252,3 +252,123 @@ def update_task(row_id: int, text: str) -> None:
 def delete_task(row_id: int) -> None:
     with _connect() as conn:
         conn.execute("DELETE FROM notes WHERE id = ?", (row_id,))
+
+
+# ────────────────────────────────────────────────────────────
+# Long sessions (continuous recording + chunked transcription)
+# ────────────────────────────────────────────────────────────
+
+# Status lifecycle:
+#   recording    → SessionRecorder is actively writing audio to disk
+#   transcribing → recording stopped, LongTranscriber is processing chunks
+#   done         → transcription finished successfully
+#   error        → something failed (details in `error` column)
+#   cancelled    → user cancelled via ESC
+#
+# Crash recovery: rows stuck in `recording` on startup are marked `error`
+# or resumed by `sessions_find_stale()`.
+
+def init_sessions_table() -> None:
+    """Create sessions table if not exists."""
+    with _connect() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT DEFAULT (datetime('now','localtime')),
+                ended_at TEXT,
+                duration_sec REAL,
+                audio_path TEXT NOT NULL,
+                text TEXT,
+                status TEXT NOT NULL DEFAULT 'recording',
+                error TEXT,
+                chunk_count INTEGER DEFAULT 0,
+                chunks_done INTEGER DEFAULT 0
+            )
+        """)
+
+
+def session_create(audio_path: str) -> int:
+    """Start a new session row. Returns session id."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO sessions (audio_path, status) VALUES (?, 'recording')",
+            (audio_path,),
+        )
+        return cur.lastrowid
+
+
+def session_finalize(session_id: int, duration_sec: float) -> None:
+    """Mark end of recording phase — recording finished, transcription next."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET ended_at=datetime('now','localtime'), "
+            "duration_sec=?, status='transcribing' WHERE id=?",
+            (duration_sec, session_id),
+        )
+
+
+def session_set_status(session_id: int, status: str,
+                       error: str | None = None) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET status=?, error=? WHERE id=?",
+            (status, error, session_id),
+        )
+
+
+def session_set_text(session_id: int, text: str) -> None:
+    """Save transcribed text and mark status=done."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET text=?, status='done' WHERE id=?",
+            (text, session_id),
+        )
+
+
+def session_set_progress(session_id: int, done: int, total: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE sessions SET chunks_done=?, chunk_count=? WHERE id=?",
+            (done, total, session_id),
+        )
+
+
+def session_get(session_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM sessions WHERE id=?", (session_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def session_list(limit: int = 50, offset: int = 0) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sessions ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def session_search(query: str, limit: int = 50, offset: int = 0) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sessions WHERE text LIKE ? "
+            "ORDER BY id DESC LIMIT ? OFFSET ?",
+            (f"%{query}%", limit, offset),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def session_delete(session_id: int) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+
+
+def sessions_find_stale() -> list[dict]:
+    """Find sessions stuck in 'recording' status — likely crashed mid-record."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT * FROM sessions WHERE status='recording' ORDER BY id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]

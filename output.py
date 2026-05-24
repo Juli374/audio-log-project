@@ -1,57 +1,70 @@
-"""Text output: auto-paste via PasteHelper.app launched through macOS 'open'."""
+"""Text output: clipboard + auto-paste (Cmd+V) via Quartz CGEvent.
 
-import os
-import subprocess
+Runs inside AudioLog.app's own process, so it uses AudioLog's TCC
+Accessibility grant directly. No helper binary, no subprocess — a single
+Accessibility approval (for AudioLog.app) is all the user needs.
+"""
+
+import time
 
 from AppKit import NSPasteboard, NSPasteboardTypeString
+from ApplicationServices import AXIsProcessTrusted
+from Quartz import (
+    CGEventCreateKeyboardEvent,
+    CGEventPost,
+    CGEventSetFlags,
+    kCGEventFlagMaskCommand,
+    kCGHIDEventTap,
+)
 
 from utils import get_logger
 
 log = get_logger(__name__)
 
-def _paste_helper_path():
-    from utils import resource_path
-    return str(resource_path() / "PasteHelper.app")
+# macOS virtual keycode for "V"
+_KEYCODE_V = 9
 
 
-def _copy_to_clipboard(text):
+def _copy_to_clipboard(text: str) -> bool:
     """Copy text to system clipboard via NSPasteboard."""
     pb = NSPasteboard.generalPasteboard()
     pb.clearContents()
-    return pb.setString_forType_(text, NSPasteboardTypeString)
+    return bool(pb.setString_forType_(text, NSPasteboardTypeString))
 
 
-def paste_text(text):
+def _post_cmd_v() -> None:
+    """Synthesize ⌘V at the HID event tap. Requires Accessibility."""
+    # Using a None source (default) — macOS attributes events to our process,
+    # which is what TCC needs for Accessibility grant checks.
+    down = CGEventCreateKeyboardEvent(None, _KEYCODE_V, True)
+    CGEventSetFlags(down, kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, down)
+    time.sleep(0.02)
+    up = CGEventCreateKeyboardEvent(None, _KEYCODE_V, False)
+    CGEventSetFlags(up, kCGEventFlagMaskCommand)
+    CGEventPost(kCGHIDEventTap, up)
+
+
+def paste_text(text: str) -> None:
     """Copy text to clipboard and auto-paste at cursor."""
     text = text.strip()
     if not text:
         log.warning("Empty transcription, skipping")
         return
 
-    # 1. Always copy to clipboard as safety net
+    # 1. Always copy to clipboard as a safety net (user can Cmd+V manually
+    #    if the auto-paste is blocked by some app's event tap).
     _copy_to_clipboard(text)
 
-    # 2. Kill any lingering PasteHelper from previous run
-    subprocess.run(["killall", "PasteHelper"], capture_output=True)
+    # 2. Small delay lets the frontmost app finish any in-flight keystroke
+    #    handling (e.g. the hotkey release) before we inject ⌘V.
+    time.sleep(0.05)
 
-    # 3. Launch PasteHelper via 'open' (own TCC identity) with text as argument
-    #    -n = new instance, -W = wait for exit, -g = don't steal focus
+    trusted = bool(AXIsProcessTrusted())
     try:
-        result = subprocess.run(
-            ["open", "-n", "-W", "-g", "-a", _paste_helper_path(), "--args", text],
-            timeout=5, capture_output=True,
-        )
-        stderr_out = result.stderr.decode().strip()
-        if stderr_out:
-            for line in stderr_out.splitlines():
-                log.info("  %s", line)
-        if result.returncode == 0:
-            log.info("Pasted %d chars: %.60s…", len(text), text)
-        else:
-            log.warning("PasteHelper failed (rc=%d): %s — text is in clipboard",
-                        result.returncode, stderr_out)
-    except subprocess.TimeoutExpired:
-        subprocess.run(["killall", "PasteHelper"], capture_output=True)
-        log.warning("PasteHelper timed out — text is in clipboard")
+        _post_cmd_v()
+        log.info("Pasted %d chars (AX trusted=%s): %.60s…",
+                 len(text), trusted, text)
     except Exception:
-        log.warning("Auto-paste failed, text is in clipboard", exc_info=True)
+        log.warning("Auto-paste failed (AX trusted=%s), text is in clipboard",
+                    trusted, exc_info=True)

@@ -1,60 +1,55 @@
-"""Floating overlay with native macOS styling — SF Symbols, pulsing dot, blur."""
+"""Thin translucent wave indicator across the top of the screen.
 
+Replaces the old floating text overlay. The recording state is conveyed as
+a ~4px wave line right under the menu bar:
+
+- recording → animated sine wave (the only moving state)
+- process   → flat line, same color family (blue)
+- done/error → flat line, colored, auto-hides
+- idle      → hidden
+
+All states at 30% opacity, click-through, on all Spaces. No text, no icon,
+no popup — stays out of the user's way. Live status (timers, durations)
+belongs in the menu bar title, not here.
+"""
+
+import math
+import threading
+
+import objc
 from AppKit import (
-    NSAnimationContext,
-    NSApplication,
+    NSBezierPath,
     NSColor,
-    NSEvent,
-    NSFont,
-    NSImage,
-    NSImageSymbolConfiguration,
-    NSImageView,
     NSMakeRect,
     NSPanel,
     NSScreen,
-    NSTextField,
     NSView,
     NSWindowStyleMaskBorderless,
     NSWindowStyleMaskNonactivatingPanel,
 )
-from Quartz import CABasicAnimation
+from PyObjCTools import AppHelper
 
 from utils import get_logger
 
 log = get_logger(__name__)
 
-_H = 40
-_OFFSET_Y = 24
-_CORNER = 12
-_PAD_L = 14
-_PAD_R = 14
-_DOT_SIZE = 10
-_ICON_SIZE = 16
-_GAP = 8
-_FADE = 0.15
-_MIN_W = 140
+# Geometry
+_H = 4                    # indicator strip height, px
+_OVERALL_ALPHA = 0.55     # ~55% opacity — noticeable but unobtrusive
 
-# Collection behavior
+# Animation
+_FPS = 30
+_WAVE_SPEED = 6.0         # phase advance per second (rad/s-ish)
+_WAVE_AMPL = 1.3          # peak px from centerline (line is _H tall)
+_WAVE_PERIOD = 70.0       # px per full cycle
+
+# Window level — above most but below menu bar
+_WINDOW_LEVEL = 25
+
+# Collection behavior: visible on all Spaces, in full-screen, not in ⌘-tab cycle
 _CAN_JOIN_ALL_SPACES = 1 << 0
 _FULL_SCREEN_AUXILIARY = 1 << 8
 _IGNORES_CYCLE = 1 << 6
-
-# Theme colors: (bg, text)
-_BG_LIGHT = NSColor.colorWithRed_green_blue_alpha_(0.1, 0.1, 0.12, 0.92)   # dark bg for light mode
-_BG_DARK = NSColor.colorWithRed_green_blue_alpha_(0.95, 0.95, 0.97, 0.92)  # light bg for dark mode
-_TEXT_LIGHT = NSColor.colorWithRed_green_blue_alpha_(1, 1, 1, 0.9)          # white text for light mode
-_TEXT_DARK = NSColor.colorWithRed_green_blue_alpha_(0.08, 0.08, 0.1, 0.9)   # dark text for dark mode
-
-# Text height for vertical centering
-_TEXT_H = 18
-
-
-def _is_dark_mode():
-    """Check if macOS is in dark mode."""
-    app = NSApplication.sharedApplication()
-    appearance = app.effectiveAppearance()
-    name = appearance.bestMatchFromAppearancesWithNames_(["NSAppearanceNameAqua", "NSAppearanceNameDarkAqua"])
-    return name == "NSAppearanceNameDarkAqua"
 
 # State colors
 _COLOR_REC = NSColor.colorWithRed_green_blue_alpha_(1.0, 0.25, 0.25, 1.0)
@@ -62,207 +57,150 @@ _COLOR_PROC = NSColor.colorWithRed_green_blue_alpha_(0.35, 0.6, 1.0, 1.0)
 _COLOR_DONE = NSColor.colorWithRed_green_blue_alpha_(0.3, 0.85, 0.45, 1.0)
 _COLOR_ERR = NSColor.colorWithRed_green_blue_alpha_(1.0, 0.35, 0.35, 1.0)
 
-# SF Symbols
-_SYM_MIC = "mic.fill"
-_SYM_PROC = "waveform"
-_SYM_DONE = "checkmark.circle.fill"
-_SYM_ERR = "xmark.circle.fill"
-
-# State config: (symbol_name, color, pulse_dot)
-_STATES = {
-    "record":  (_SYM_MIC,  _COLOR_REC,  True),
-    "process": (_SYM_PROC, _COLOR_PROC, False),
-    "done":    (_SYM_DONE, _COLOR_DONE, False),
-    "error":   (_SYM_ERR,  _COLOR_ERR,  False),
+_STATE_COLORS = {
+    "record": _COLOR_REC,
+    "process": _COLOR_PROC,
+    "done": _COLOR_DONE,
+    "error": _COLOR_ERR,
 }
 
 
-def _sf_image(name, color, size=_ICON_SIZE):
-    """Load an SF Symbol with the given color."""
-    img = NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
-    if img is None:
-        return None
-    config = NSImageSymbolConfiguration.configurationWithPointSize_weight_(
-        size, 0.4  # medium weight
-    )
-    color_config = NSImageSymbolConfiguration.configurationWithHierarchicalColor_(color)
-    combined = config.configurationByApplyingConfiguration_(color_config)
-    return img.imageWithSymbolConfiguration_(combined)
+class _WaveView(NSView):
+    def initWithFrame_(self, frame):
+        self = objc.super(_WaveView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self._phase = 0.0
+        self._color = _COLOR_REC
+        self._animate = False
+        return self
 
+    def setState_animate_(self, color, animate):
+        self._color = color
+        self._animate = bool(animate)
+        self.setNeedsDisplay_(True)
 
-def _create_panel():
-    w = 240
-    style = NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
-    p = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-        NSMakeRect(0, 0, w, _H), style, 2, False,
-    )
-    p.setLevel_(25)
-    p.setOpaque_(False)
-    p.setBackgroundColor_(NSColor.clearColor())
-    p.setIgnoresMouseEvents_(True)
-    p.setHasShadow_(True)
-    p.setFloatingPanel_(True)
-    p.setWorksWhenModal_(True)
-    p.setHidesOnDeactivate_(False)
-    p.setCollectionBehavior_(
-        _CAN_JOIN_ALL_SPACES | _FULL_SCREEN_AUXILIARY | _IGNORES_CYCLE
-    )
-    p.setAlphaValue_(0.0)
+    def advancePhase(self):
+        # Called from the animation timer thread via callAfter
+        if not self._animate:
+            return
+        self._phase += _WAVE_SPEED / _FPS
+        self.setNeedsDisplay_(True)
 
-    # Container with dark rounded background
-    container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, w, _H))
-    container.setWantsLayer_(True)
-    c_layer = container.layer()
-    c_layer.setCornerRadius_(_CORNER)
-    c_layer.setMasksToBounds_(True)
-    c_layer.setBackgroundColor_(_BG_LIGHT.CGColor())
+    def drawRect_(self, rect):
+        NSColor.clearColor().set()
+        NSBezierPath.fillRect_(rect)
 
-    # Pulsing dot (recording indicator)
-    dot_x = _PAD_L
-    dot_y = (_H - _DOT_SIZE) / 2.0
-    dot_view = NSView.alloc().initWithFrame_(
-        NSMakeRect(dot_x, dot_y, _DOT_SIZE, _DOT_SIZE)
-    )
-    dot_view.setWantsLayer_(True)
-    dot_layer = dot_view.layer()
-    dot_layer.setCornerRadius_(_DOT_SIZE / 2)
-    dot_layer.setBackgroundColor_(_COLOR_REC.CGColor())
-    container.addSubview_(dot_view)
+        w = float(self.frame().size.width)
+        mid = _H / 2.0
 
-    # SF Symbol icon
-    icon_x = dot_x + _DOT_SIZE + _GAP
-    icon_y = (_H - _ICON_SIZE) / 2.0
-    icon_view = NSImageView.alloc().initWithFrame_(
-        NSMakeRect(icon_x, icon_y, _ICON_SIZE, _ICON_SIZE)
-    )
-    icon_view.setImageScaling_(2)  # proportionallyUpOrDown
-    container.addSubview_(icon_view)
+        self._color.set()
+        path = NSBezierPath.bezierPath()
+        path.setLineWidth_(1.5)
 
-    # Text label — vertically centered
-    text_x = icon_x + _ICON_SIZE + _GAP
-    text_w = w - text_x - _PAD_R
-    text_y = (_H - _TEXT_H) / 2.0
-    label = NSTextField.alloc().initWithFrame_(
-        NSMakeRect(text_x, text_y, text_w, _TEXT_H)
-    )
-    label.setEditable_(False)
-    label.setBezeled_(False)
-    label.setDrawsBackground_(False)
-    label.setTextColor_(NSColor.colorWithRed_green_blue_alpha_(1, 1, 1, 0.9))
-    label.setFont_(NSFont.systemFontOfSize_weight_(13, 0.3))
-    label.setAlignment_(0)  # left
-    label.setLineBreakMode_(5)  # truncate tail
-    container.addSubview_(label)
+        if self._animate and _WAVE_PERIOD > 0:
+            path.moveToPoint_(
+                (0.0, mid + _WAVE_AMPL * math.sin(self._phase)))
+            x = 1.0
+            while x <= w:
+                y = mid + _WAVE_AMPL * math.sin(
+                    self._phase + x * 2.0 * math.pi / _WAVE_PERIOD)
+                path.lineToPoint_((x, y))
+                x += 1.0
+        else:
+            path.moveToPoint_((0.0, mid))
+            path.lineToPoint_((w, mid))
 
-    p.setContentView_(container)
-    return p, container, dot_view, icon_view, label
+        path.stroke()
 
 
 class Overlay:
-    """Call build() once on main thread, then show/hide directly."""
+    """Thin top-of-screen wave indicator.
+
+    Keeps the legacy `show(text, state)` / `hide()` API so callers don't
+    have to change — but `text` is ignored (state alone drives the visual).
+    """
 
     def __init__(self) -> None:
         self._panel = None
-        self._container = None
-        self._dot = None
-        self._icon = None
-        self._label = None
-        self._pulsing = False
+        self._view = None
+        self._timer_stop = threading.Event()
+        self._timer_thread: threading.Thread | None = None
 
     def build(self) -> None:
-        self._panel, self._container, \
-            self._dot, self._icon, self._label = _create_panel()
-        log.info("Overlay panel created")
-
-    def show(self, text: str, state: str = "record") -> None:
-        """Show overlay near cursor. state: record/process/done/error."""
-        if not self._panel:
+        screen = NSScreen.mainScreen()
+        if not screen:
+            log.warning("No main screen — overlay disabled")
             return
 
-        # Apply theme
-        dark = _is_dark_mode()
-        bg_color = _BG_DARK if dark else _BG_LIGHT
-        text_color = _TEXT_DARK if dark else _TEXT_LIGHT
-        self._container.layer().setBackgroundColor_(bg_color.CGColor())
-        self._label.setTextColor_(text_color)
+        vf = screen.visibleFrame()  # excludes menu bar and dock
+        # Place the strip at the very top of the visible area (= just below
+        # the menu bar). Height extends downward into app space.
+        y = vf.origin.y + vf.size.height - _H
+        panel_rect = NSMakeRect(vf.origin.x, y, vf.size.width, _H)
 
-        sym_name, color, pulse = _STATES.get(state, _STATES["record"])
+        style = (NSWindowStyleMaskBorderless
+                 | NSWindowStyleMaskNonactivatingPanel)
+        self._panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
+            panel_rect, style, 2, False,
+        )
+        self._panel.setLevel_(_WINDOW_LEVEL)
+        self._panel.setOpaque_(False)
+        self._panel.setBackgroundColor_(NSColor.clearColor())
+        self._panel.setIgnoresMouseEvents_(True)
+        self._panel.setHasShadow_(False)
+        self._panel.setFloatingPanel_(True)
+        self._panel.setHidesOnDeactivate_(False)
+        self._panel.setAlphaValue_(0.0)  # invisible until show()
+        self._panel.setCollectionBehavior_(
+            _CAN_JOIN_ALL_SPACES | _FULL_SCREEN_AUXILIARY | _IGNORES_CYCLE)
 
-        # Update dot color
-        self._dot.layer().setBackgroundColor_(color.CGColor())
-        if pulse and not self._pulsing:
-            self._start_pulse()
-        elif not pulse and self._pulsing:
-            self._stop_pulse()
+        self._view = _WaveView.alloc().initWithFrame_(
+            NSMakeRect(0, 0, vf.size.width, _H))
+        self._panel.setContentView_(self._view)
+        log.info("Wave overlay created (%d×%d at y=%d)",
+                 int(vf.size.width), _H, int(y))
 
-        # Update SF Symbol icon
-        sf_img = _sf_image(sym_name, color)
-        if sf_img:
-            self._icon.setImage_(sf_img)
-
-        # Update text (strip leading emoji if present)
-        clean = text
-        if clean and not clean[0].isascii():
-            parts = clean.split(None, 1)
-            if len(parts) == 2:
-                clean = parts[1]
-        self._label.setStringValue_(clean)
-
-        # Auto-size width
-        text_start = _PAD_L + _DOT_SIZE + _GAP + _ICON_SIZE + _GAP
-        text_size = self._label.attributedStringValue().size()
-        w = max(_MIN_W, int(text_start + text_size.width + _PAD_R + 8))
-
-        # Resize everything
-        text_y = (_H - _TEXT_H) / 2.0
-        self._panel.setContentSize_((w, _H))
-        self._container.setFrame_(NSMakeRect(0, 0, w, _H))
-        self._label.setFrame_(NSMakeRect(text_start, text_y, w - text_start - _PAD_R, _TEXT_H))
-
-        # Position near cursor
-        mouse = NSEvent.mouseLocation()
-        screen = NSScreen.mainScreen()
-        if screen:
-            sf = screen.frame()
-            x = max(sf.origin.x, min(mouse.x - w / 2, sf.origin.x + sf.size.width - w))
-            y = max(sf.origin.y, mouse.y - _H - _OFFSET_Y)
-            self._panel.setFrameOrigin_((x, y))
-
+    def show(self, text: str | None = None, state: str = "record") -> None:
+        """Show the wave line in the given state. `text` is ignored."""
+        if self._panel is None:
+            return
+        color = _STATE_COLORS.get(state, _COLOR_REC)
+        animate = (state == "record")
+        if self._view is not None:
+            self._view.setState_animate_(color, animate)
+        self._panel.setAlphaValue_(_OVERALL_ALPHA)
         self._panel.orderFrontRegardless()
-        self._fade(1.0)
+        if animate:
+            self._start_timer()
+        else:
+            self._stop_timer()
 
     def hide(self) -> None:
-        if self._panel:
-            self._stop_pulse()
-            self._fade(0.0)
+        if self._panel is None:
+            return
+        self._stop_timer()
+        self._panel.setAlphaValue_(0.0)
 
-    def _fade(self, alpha):
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.currentContext().setDuration_(_FADE)
-        self._panel.animator().setAlphaValue_(alpha)
-        NSAnimationContext.endGrouping()
+    # ── internal: animation driver ──
 
-    def _start_pulse(self):
-        self._pulsing = True
-        layer = self._dot.layer()
+    def _start_timer(self) -> None:
+        if self._timer_thread is not None and self._timer_thread.is_alive():
+            return
+        self._timer_stop.clear()
 
-        opacity = CABasicAnimation.animationWithKeyPath_("opacity")
-        opacity.setFromValue_(1.0)
-        opacity.setToValue_(0.3)
-        opacity.setDuration_(0.8)
-        opacity.setAutoreverses_(True)
-        opacity.setRepeatCount_(float("inf"))
-        layer.addAnimation_forKey_(opacity, "pulse_opacity")
+        def loop():
+            period = 1.0 / _FPS
+            while not self._timer_stop.wait(period):
+                view = self._view
+                if view is None:
+                    return
+                AppHelper.callAfter(view.advancePhase)
 
-        scale = CABasicAnimation.animationWithKeyPath_("transform.scale")
-        scale.setFromValue_(1.0)
-        scale.setToValue_(1.3)
-        scale.setDuration_(0.8)
-        scale.setAutoreverses_(True)
-        scale.setRepeatCount_(float("inf"))
-        layer.addAnimation_forKey_(scale, "pulse_scale")
+        self._timer_thread = threading.Thread(
+            target=loop, daemon=True, name="wave-overlay")
+        self._timer_thread.start()
 
-    def _stop_pulse(self):
-        if self._pulsing:
-            self._dot.layer().removeAllAnimations()
-            self._pulsing = False
+    def _stop_timer(self) -> None:
+        self._timer_stop.set()
+        self._timer_thread = None

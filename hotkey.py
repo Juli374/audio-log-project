@@ -20,11 +20,63 @@ _FLAGS_CHANGED_MASK = 1 << 12
 # macOS virtual keycode for Escape
 _ESC_KEYCODE = 53
 
-# NSEventModifierFlagOption
-_OPTION_FLAG = 1 << 19
+# NSEvent device-independent modifier flags
+_FLAG_SHIFT = 1 << 17    # NSEventModifierFlagShift
+_FLAG_CONTROL = 1 << 18  # NSEventModifierFlagControl
+_FLAG_OPTION = 1 << 19   # NSEventModifierFlagOption (Alt)
+_FLAG_COMMAND = 1 << 20  # NSEventModifierFlagCommand (⌘)
 
-# macOS virtual keycode for Right Option
-_RIGHT_OPTION_KEYCODE = 61
+# Backward-compat alias used in older external code / tests.
+_OPTION_FLAG = _FLAG_OPTION
+
+# macOS virtual keycodes for the supported modifier keys.
+# Mapping each keycode to the modifier flag it carries — left/right of
+# the same key share a flag (the keycode tells us which side, the flag
+# tells us press vs release state).
+_KEYCODE_COMMAND_LEFT = 55
+_KEYCODE_COMMAND_RIGHT = 54
+_KEYCODE_OPTION_LEFT = 58
+_KEYCODE_OPTION_RIGHT = 61
+_KEYCODE_CONTROL_LEFT = 59
+_KEYCODE_CONTROL_RIGHT = 62
+_KEYCODE_SHIFT_LEFT = 56
+_KEYCODE_SHIFT_RIGHT = 60
+
+_RIGHT_OPTION_KEYCODE = _KEYCODE_OPTION_RIGHT  # default short-dictation key
+
+MODIFIER_KEY_FLAGS: dict[int, int] = {
+    _KEYCODE_COMMAND_LEFT:  _FLAG_COMMAND,
+    _KEYCODE_COMMAND_RIGHT: _FLAG_COMMAND,
+    _KEYCODE_OPTION_LEFT:   _FLAG_OPTION,
+    _KEYCODE_OPTION_RIGHT:  _FLAG_OPTION,
+    _KEYCODE_CONTROL_LEFT:  _FLAG_CONTROL,
+    _KEYCODE_CONTROL_RIGHT: _FLAG_CONTROL,
+    _KEYCODE_SHIFT_LEFT:    _FLAG_SHIFT,
+    _KEYCODE_SHIFT_RIGHT:   _FLAG_SHIFT,
+}
+
+# Display labels for the menubar UI. Order here is the order shown to
+# the user — keep the most-likely picks first.
+KEY_DISPLAY_NAMES: dict[int, str] = {
+    _KEYCODE_OPTION_RIGHT:  "Right ⌥ (Option)",
+    _KEYCODE_OPTION_LEFT:   "Left ⌥ (Option)",
+    _KEYCODE_COMMAND_RIGHT: "Right ⌘ (Command)",
+    _KEYCODE_COMMAND_LEFT:  "Left ⌘ (Command)",
+    _KEYCODE_CONTROL_RIGHT: "Right ⌃ (Control)",
+    _KEYCODE_CONTROL_LEFT:  "Left ⌃ (Control)",
+    _KEYCODE_SHIFT_RIGHT:   "Right ⇧ (Shift)",
+    _KEYCODE_SHIFT_LEFT:    "Left ⇧ (Shift)",
+}
+
+
+def flag_for_keycode(keycode: int) -> int:
+    """Modifier flag carried by a given keycode.
+
+    Falls back to OPTION for unknown keycodes — preserves legacy
+    behaviour if a stale settings file holds something we don't know
+    about.
+    """
+    return MODIFIER_KEY_FLAGS.get(keycode, _FLAG_OPTION)
 
 # Polling interval for detecting missed key-up events
 _POLL_INTERVAL = 0.5
@@ -35,6 +87,15 @@ _ESC_POLL_INTERVAL = 0.1
 # Minimum interval between toggle actions (prevents double-trigger from
 # held key repeats or bouncing contacts)
 _TOGGLE_DEBOUNCE = 0.3
+
+# Long-session key: window for detecting a double-tap of Left Option.
+# Two presses within this window = fire toggle. Guards against false
+# triggers when user types Option+arrow/delete etc. (any single press
+# during typing won't match the double-tap pattern).
+_LONG_DOUBLE_TAP_WINDOW = 0.5
+
+# Minimum gap between long-session fires (protects against key repeat)
+_LONG_DEBOUNCE = 0.2
 
 
 class HotkeyListener:
@@ -52,15 +113,21 @@ class HotkeyListener:
     key-up events (can happen after sleep, idle, or focus loss).
     """
 
-    def __init__(self, config, on_activate, on_deactivate, on_cancel=None):
+    def __init__(self, config, on_activate, on_deactivate, on_cancel=None,
+                 on_long_toggle=None):
         self._config = config
         self._on_activate = on_activate
         self._on_deactivate = on_deactivate
         self._on_cancel = on_cancel
+        self._on_long_toggle = on_long_toggle
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
+        self._long_keycode = getattr(config, "session_hotkey_keycode", None)
+        self._long_require_double_tap = getattr(
+            config, "session_hotkey_require_double_tap", True)
         self._pressed = False
         self._recording = False  # for toggle mode
         self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
+        self._last_long_tap = 0.0    # for double-tap detection on long key
         self._global_monitor = None
         self._local_monitor = None
         self._poll_timer: threading.Timer | None = None
@@ -128,19 +195,59 @@ class HotkeyListener:
                 return
 
     def _handle(self, event):
-        if event.keyCode() != self._keycode:
+        kc = event.keyCode()
+        flags = event.modifierFlags()
+
+        if kc == self._keycode:
+            is_pressed = bool(flags & flag_for_keycode(self._keycode))
+            if getattr(self._config, "hotkey_mode", "hold") == "toggle":
+                self._handle_toggle(is_pressed)
+            else:
+                self._handle_hold(is_pressed)
+        elif (self._long_keycode is not None and kc == self._long_keycode
+              and self._on_long_toggle is not None):
+            is_pressed = bool(flags & flag_for_keycode(self._long_keycode))
+            self._handle_long(is_pressed)
+
+    def _handle_long(self, is_pressed):
+        """Left Option handler for long-session toggle.
+
+        Default is double-tap: two presses within 0.5s fire the toggle.
+        Normal typing (Option+arrow, Option+delete, etc.) produces single
+        presses and won't match the pattern. Set
+        `session_hotkey_require_double_tap=False` for single-press mode.
+        """
+        if not is_pressed:
+            return  # only fire on press, not release
+
+        now = time.monotonic()
+
+        if not self._long_require_double_tap:
+            if now - self._last_long_tap < _LONG_DEBOUNCE:
+                return
+            self._last_long_tap = now
+            log.info("Long session hotkey: single-press toggle")
+            try:
+                AppHelper.callAfter(self._on_long_toggle)
+            except Exception:
+                log.exception("Error in on_long_toggle")
             return
 
-        option_pressed = bool(event.modifierFlags() & _OPTION_FLAG)
-
-        if getattr(self._config, "hotkey_mode", "hold") == "toggle":
-            self._handle_toggle(option_pressed)
+        # Double-tap mode
+        if now - self._last_long_tap < _LONG_DOUBLE_TAP_WINDOW:
+            log.info("Long session hotkey: double-tap detected")
+            self._last_long_tap = 0.0  # reset so 3rd tap doesn't re-fire
+            try:
+                AppHelper.callAfter(self._on_long_toggle)
+            except Exception:
+                log.exception("Error in on_long_toggle")
         else:
-            self._handle_hold(option_pressed)
+            # First tap — wait for second
+            self._last_long_tap = now
 
-    def _handle_hold(self, option_pressed):
+    def _handle_hold(self, is_pressed):
         """Hold mode: hold key to record, release to stop."""
-        if option_pressed and not self._pressed:
+        if is_pressed and not self._pressed:
             self._pressed = True
             self._start_polling()
             self._start_esc_polling()
@@ -149,7 +256,7 @@ class HotkeyListener:
             except Exception:
                 log.exception("Error in on_activate")
 
-        elif not option_pressed and self._pressed:
+        elif not is_pressed and self._pressed:
             self._pressed = False
             self._cancel_polling()
             self._stop_esc_polling()
@@ -158,13 +265,13 @@ class HotkeyListener:
             except Exception:
                 log.exception("Error in on_deactivate")
 
-    def _handle_toggle(self, option_pressed):
+    def _handle_toggle(self, is_pressed):
         """Toggle mode: press once to start, press again to stop.
 
         Uses time-based debounce instead of _pressed flag to avoid getting
         stuck when macOS drops a key-up event.
         """
-        if not option_pressed:
+        if not is_pressed:
             return
 
         now = time.monotonic()
@@ -211,15 +318,16 @@ class HotkeyListener:
             self._poll_timer = None
 
     def _poll_key_state(self):
-        """Check real modifier flags via Quartz. If Option is not pressed
-        but _pressed is True, we missed a key-up event."""
+        """Check real modifier flags via Quartz. If the chosen modifier
+        is no longer held but _pressed is True, we missed a key-up
+        event."""
         if not self._pressed:
             return
 
         flags = CGEventSourceFlagsState(kCGEventSourceStateHIDSystemState)
-        option_held = bool(flags & _OPTION_FLAG)
+        held = bool(flags & flag_for_keycode(self._keycode))
 
-        if not option_held:
+        if not held:
             log.warning("Polling detected missed key-up — forcing deactivate")
             self._pressed = False
             self._recording = False
@@ -234,6 +342,27 @@ class HotkeyListener:
         self._poll_timer = threading.Timer(_POLL_INTERVAL, self._poll_key_state)
         self._poll_timer.daemon = True
         self._poll_timer.start()
+
+    def set_keycode(self, keycode: int) -> None:
+        """Live-update the short-dictation hotkey. Resets in-flight
+        press state so the next event is treated as a fresh press."""
+        if keycode == self._keycode:
+            return
+        log.info("Short hotkey: keycode %d → %d", self._keycode, keycode)
+        self._keycode = keycode
+        self._pressed = False
+        self._recording = False
+        self._last_toggle_time = 0.0
+        self._cancel_polling()
+        self._stop_esc_polling()
+
+    def set_long_keycode(self, keycode: int) -> None:
+        """Live-update the long-session hotkey."""
+        if keycode == self._long_keycode:
+            return
+        log.info("Long hotkey: keycode %s → %d", self._long_keycode, keycode)
+        self._long_keycode = keycode
+        self._last_long_tap = 0.0
 
     def stop(self):
         self._cancel_polling()
