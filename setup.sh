@@ -22,10 +22,11 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 echo "=== audio-log-project setup ==="
 echo ""
 echo "Transcription mode:"
-echo "  1) API — OpenAI API (no local model, needs API key, fast)"
-echo "  2) Local — Whisper model (~500 MB download, works offline)"
+echo "  1) Groq — Groq API (whisper-large-v3-turbo, fastest, needs gsk_... key)"
+echo "  2) OpenAI — OpenAI API (gpt-4o-transcribe, needs sk-... key)"
+echo "  3) Local — Whisper model (~500 MB download, works offline)"
 echo ""
-read -rp "Choose [1/2, default=1]: " MODE_CHOICE
+read -rp "Choose [1/2/3, default=1]: " MODE_CHOICE
 MODE_CHOICE="${MODE_CHOICE:-1}"
 
 # 1. Create venv
@@ -41,7 +42,7 @@ pip install --upgrade pip -q
 pip install -r requirements.txt -q
 
 # 3. Download model (only for local mode)
-if [ "$MODE_CHOICE" = "2" ]; then
+if [ "$MODE_CHOICE" = "3" ]; then
     MODEL_NAME="small"
     MODEL_DIR="$SCRIPT_DIR/models"
     MODEL_FILE="$MODEL_DIR/ggml-${MODEL_NAME}.bin"
@@ -62,23 +63,35 @@ DATA_DIR="$HOME/Library/Application Support/audio-log"
 SETTINGS_FILE="$DATA_DIR/settings.json"
 mkdir -p "$DATA_DIR"
 if [ "$MODE_CHOICE" = "1" ] && [ ! -f "$SETTINGS_FILE" ]; then
+    read -rp "Groq API key (gsk_...): " API_KEY
+    cat > "$SETTINGS_FILE" <<SETTINGS
+{
+  "transcription_mode": "groq",
+  "groq_api_key": "$API_KEY",
+  "groq_model": "whisper-large-v3-turbo",
+  "language": "ru",
+  "hotkey_mode": "toggle"
+}
+SETTINGS
+    echo "Settings saved to $SETTINGS_FILE"
+elif [ "$MODE_CHOICE" = "2" ] && [ ! -f "$SETTINGS_FILE" ]; then
     read -rp "OpenAI API key (sk-...): " API_KEY
     cat > "$SETTINGS_FILE" <<SETTINGS
 {
   "transcription_mode": "api",
   "openai_api_key": "$API_KEY",
-  "openai_model": "gpt-4o-mini-transcribe",
+  "openai_model": "gpt-4o-transcribe",
   "language": "ru",
-  "hotkey_mode": "hold"
+  "hotkey_mode": "toggle"
 }
 SETTINGS
     echo "Settings saved to $SETTINGS_FILE"
-elif [ "$MODE_CHOICE" = "2" ] && [ ! -f "$SETTINGS_FILE" ]; then
+elif [ "$MODE_CHOICE" = "3" ] && [ ! -f "$SETTINGS_FILE" ]; then
     cat > "$SETTINGS_FILE" <<SETTINGS
 {
   "transcription_mode": "local",
   "language": "ru",
-  "hotkey_mode": "hold"
+  "hotkey_mode": "toggle"
 }
 SETTINGS
 fi
@@ -115,7 +128,10 @@ echo ""
 echo "=== Setup complete ==="
 echo ""
 if [ "$MODE_CHOICE" = "1" ]; then
-    echo "Mode: API (OpenAI). No local model."
+    echo "Mode: Groq (whisper-large-v3-turbo). No local model."
+    echo "API key can be changed in: $SETTINGS_FILE"
+elif [ "$MODE_CHOICE" = "2" ]; then
+    echo "Mode: OpenAI API (gpt-4o-transcribe). No local model."
     echo "API key can be changed in: $SETTINGS_FILE"
 else
     echo "Mode: Local (Whisper). Model: models/ggml-small.bin"
