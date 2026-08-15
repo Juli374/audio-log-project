@@ -43,7 +43,9 @@ from Quartz import (
     CGEventCreateKeyboardEvent,
     CGEventPost,
     CGEventSetFlags,
+    CGEventSourceFlagsState,
     kCGEventFlagMaskCommand,
+    kCGEventSourceStateHIDSystemState,
     kCGHIDEventTap,
 )
 
@@ -74,6 +76,15 @@ _FONT_SIZE = 15.0
 _COPY_POLL_INTERVAL = 0.02
 _COPY_TIMEOUT = 0.45
 
+# The shortcut is pressed with modifiers still physically held (⌥D fires
+# while ⌥ is down). A synthesized ⌘C would then reach the app as ⌥⌘C and
+# copy nothing, so we wait for the user's fingers to come off first.
+_MODIFIERS_HELD_MASK = (
+    (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20)  # shift, ctrl, option, cmd
+)
+_MODIFIER_RELEASE_TIMEOUT = 1.2
+_MODIFIER_POLL_INTERVAL = 0.015
+
 # Chunking for long selections. Claude handles a few thousand characters in
 # one call comfortably; beyond that we split so nothing is silently dropped.
 _CHUNK_CHARS = 6000
@@ -99,6 +110,25 @@ def _post_cmd_c() -> None:
     CGEventPost(kCGHIDEventTap, up)
 
 
+def _wait_for_modifier_release() -> None:
+    """Block until no modifier is physically held (or we give up).
+
+    Without this the synthesized ⌘C inherits whatever the user is still
+    holding — ⌥D fires while ⌥ is down, the app receives ⌥⌘C, and nothing
+    is copied. Everything downstream then looks like an empty selection.
+    """
+    deadline = time.monotonic() + _MODIFIER_RELEASE_TIMEOUT
+    while time.monotonic() < deadline:
+        flags = CGEventSourceFlagsState(kCGEventSourceStateHIDSystemState)
+        if not (flags & _MODIFIERS_HELD_MASK):
+            # Small settle so the key-up has propagated to the focused app.
+            time.sleep(0.03)
+            return
+        time.sleep(_MODIFIER_POLL_INTERVAL)
+    log.warning("Modifiers still held after %.1fs — copying anyway",
+                _MODIFIER_RELEASE_TIMEOUT)
+
+
 def grab_selected_text() -> str:
     """Copy the frontmost app's selection and return it.
 
@@ -107,6 +137,8 @@ def grab_selected_text() -> str:
     instead of sleeping a fixed amount: apps answer ⌘C at wildly different
     speeds, and a stale read would translate the previous clipboard.
     """
+    _wait_for_modifier_release()
+
     pb = NSPasteboard.generalPasteboard()
     previous = pb.stringForType_(NSPasteboardTypeString)
     before = pb.changeCount()
@@ -132,7 +164,9 @@ def grab_selected_text() -> str:
 
         threading.Thread(target=_restore, daemon=True).start()
 
-    return (text or "").strip()
+    text = (text or "").strip()
+    log.info("Selection captured: %d chars", len(text))
+    return text
 
 
 # ── Translation ──
@@ -479,33 +513,36 @@ class TranslateController:
         if self._busy:
             return
 
-        text = grab_selected_text()
-        if not text:
-            self._popup.show(
-                "Ничего не выделено.\n\nВыдели текст и нажми клавишу "
-                "перевода дважды."
-            )
-            return
-
+        # Everything past this point waits on the keyboard and the network,
+        # so it cannot run on the main thread — that would freeze the UI of
+        # every app while we hold it.
         self._busy = True
         self._popup.show(_PLACEHOLDER)
-        threading.Thread(
-            target=self._translate_worker, args=(text,), daemon=True).start()
+        threading.Thread(target=self._worker, daemon=True).start()
 
-    def _translate_worker(self, text: str) -> None:
-        target = getattr(self._config, "translate_target", "ru") or "ru"
+    def _worker(self) -> None:
         try:
-            result = translate_text(text, target, self._config)
+            text = grab_selected_text()
+            if not text:
+                self._show_async(
+                    "Ничего не выделено.\n\nВыдели текст мышью и нажми "
+                    "сочетание перевода ещё раз."
+                )
+                return
+
+            target = getattr(self._config, "translate_target", "ru") or "ru"
+            self._show_async(translate_text(text, target, self._config))
         except Exception as e:
             log.exception("Translate failed")
-            result = f"Перевод не удался: {e}"
+            self._show_async(f"Перевод не удался: {e}")
         finally:
             self._busy = False
 
+    def _show_async(self, text: str) -> None:
         def _apply():
             # Ignore a result the user already dismissed.
             if self._popup.is_visible():
-                self._popup.update(result)
+                self._popup.update(text)
 
         AppHelper.callAfter(_apply)
 
