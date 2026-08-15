@@ -17,6 +17,15 @@ log = get_logger(__name__)
 # NSEventMaskFlagsChanged
 _FLAGS_CHANGED_MASK = 1 << 12
 
+# NSEventMaskKeyDown — used for the translate shortcut, which is a real
+# key combination rather than a bare modifier.
+_KEY_DOWN_MASK = 1 << 10
+
+# Only the device-independent modifier bits matter when matching a
+# shortcut; caps lock, fn and the left/right distinction must be ignored
+# or the combination silently stops matching.
+_MODIFIER_MASK = 0xFFFF0000
+
 # macOS virtual keycode for Escape
 _ESC_KEYCODE = 53
 
@@ -55,6 +64,33 @@ MODIFIER_KEY_FLAGS: dict[int, int] = {
     _KEYCODE_SHIFT_RIGHT:   _FLAG_SHIFT,
 }
 
+# ── Translate shortcut ──
+# A modifier-only trigger is not usable here: double-tapping Control or
+# Command collides with other apps' global shortcuts (Claude opens on a
+# double Control) and with ordinary typing. So the translate action uses a
+# genuine combination. Only combinations that macOS and the common apps
+# leave alone are offered — ⌘D is "bookmark" in browsers, ⌃⌘D is Look Up.
+_KEYCODE_T = 17
+_KEYCODE_D = 2
+
+TRANSLATE_COMBOS: dict[str, tuple[int, int, str]] = {
+    "ctrl+opt+t":   (_KEYCODE_T, _FLAG_CONTROL | _FLAG_OPTION,  "⌃⌥T"),
+    "cmd+opt+t":    (_KEYCODE_T, _FLAG_COMMAND | _FLAG_OPTION,  "⌘⌥T"),
+    "ctrl+shift+t": (_KEYCODE_T, _FLAG_CONTROL | _FLAG_SHIFT,   "⌃⇧T"),
+    "cmd+ctrl+t":   (_KEYCODE_T, _FLAG_COMMAND | _FLAG_CONTROL, "⌘⌃T"),
+    "ctrl+opt+d":   (_KEYCODE_D, _FLAG_CONTROL | _FLAG_OPTION,  "⌃⌥D"),
+    "cmd+opt+d":    (_KEYCODE_D, _FLAG_COMMAND | _FLAG_OPTION,  "⌘⌥D"),
+}
+
+DEFAULT_TRANSLATE_COMBO = "ctrl+opt+t"
+
+
+def translate_combo_label(name: str) -> str:
+    """Human-readable form of a combo id, e.g. 'ctrl+opt+t' → '⌃⌥T'."""
+    entry = TRANSLATE_COMBOS.get(name)
+    return entry[2] if entry else name
+
+
 # Display labels for the menubar UI. Order here is the order shown to
 # the user — keep the most-likely picks first.
 KEY_DISPLAY_NAMES: dict[int, str] = {
@@ -88,12 +124,6 @@ _ESC_POLL_INTERVAL = 0.1
 # held key repeats or bouncing contacts)
 _TOGGLE_DEBOUNCE = 0.3
 
-# Window for detecting a double-tap of a bare modifier key. Two presses
-# within this window = fire. Guards against false triggers when the user
-# types ⌘C / Option+arrow etc. (any single press during typing won't
-# match the double-tap pattern).
-_DOUBLE_TAP_WINDOW = 0.5
-
 
 class HotkeyListener:
     """Monitors Right Option key press/release via NSEvent monitors.
@@ -118,13 +148,15 @@ class HotkeyListener:
         self._on_cancel = on_cancel
         self._on_translate_toggle = on_translate_toggle
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
-        self._translate_keycode = getattr(config, "translate_hotkey_keycode", None)
+        self._translate_combo = getattr(
+            config, "translate_hotkey_combo", DEFAULT_TRANSLATE_COMBO)
         self._pressed = False
         self._recording = False  # for toggle mode
         self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
-        self._last_translate_tap = 0.0  # double-tap detection on translate key
         self._global_monitor = None
         self._local_monitor = None
+        self._key_global_monitor = None
+        self._key_local_monitor = None
         self._poll_timer: threading.Timer | None = None
         self._esc_stop = threading.Event()
 
@@ -140,6 +172,19 @@ class HotkeyListener:
             _FLAGS_CHANGED_MASK,
             self._handle_local,
         )
+        # Separate pair for the translate combination: key-down events are a
+        # different mask, and the local one must swallow the event so the
+        # focused app does not also act on it.
+        if self._on_translate_toggle is not None:
+            self._key_global_monitor = (
+                NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
+                    _KEY_DOWN_MASK, self._handle_key_down))
+            self._key_local_monitor = (
+                NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
+                    _KEY_DOWN_MASK, self._handle_key_down_local))
+            log.info("Translate shortcut: %s",
+                     translate_combo_label(self._translate_combo))
+
         if self._global_monitor and self._local_monitor:
             log.info("Hotkey monitors installed (global + local, keycode %d)",
                      self._keycode)
@@ -199,32 +244,38 @@ class HotkeyListener:
                 self._handle_toggle(is_pressed)
             else:
                 self._handle_hold(is_pressed)
-        elif (self._translate_keycode is not None
-              and kc == self._translate_keycode
-              and self._on_translate_toggle is not None):
-            is_pressed = bool(flags & flag_for_keycode(self._translate_keycode))
-            self._handle_translate(is_pressed)
 
-    def _handle_translate(self, is_pressed):
-        """Translate key: always double-tap.
+    def _matches_translate(self, event) -> bool:
+        """True if this key-down is exactly the translate combination."""
+        entry = TRANSLATE_COMBOS.get(self._translate_combo)
+        if entry is None or self._on_translate_toggle is None:
+            return False
+        keycode, required, _ = entry
+        if event.keyCode() != keycode:
+            return False
+        # Exact match on the modifier set: ⌃⌥T must not fire on ⌃⌥⇧T,
+        # which may well be another app's shortcut.
+        return (event.modifierFlags() & _MODIFIER_MASK) == required
 
-        The translate key is a plain modifier the user also types with
-        (⌘C, ⌘V and friends), so a single press must never fire — only two
-        presses inside the double-tap window count.
-        """
-        if not is_pressed:
-            return
+    def _fire_translate(self) -> None:
+        log.info("Translate shortcut fired: %s",
+                 translate_combo_label(self._translate_combo))
+        try:
+            AppHelper.callAfter(self._on_translate_toggle)
+        except Exception:
+            log.exception("Error in on_translate_toggle")
 
-        now = time.monotonic()
-        if now - self._last_translate_tap < _DOUBLE_TAP_WINDOW:
-            log.info("Translate hotkey: double-tap detected")
-            self._last_translate_tap = 0.0
-            try:
-                AppHelper.callAfter(self._on_translate_toggle)
-            except Exception:
-                log.exception("Error in on_translate_toggle")
-        else:
-            self._last_translate_tap = now
+    def _handle_key_down(self, event):
+        """Global monitor: key-downs while another app is focused."""
+        if self._matches_translate(event):
+            self._fire_translate()
+
+    def _handle_key_down_local(self, event):
+        """Local monitor: swallow the event so our own UI doesn't see it."""
+        if self._matches_translate(event):
+            self._fire_translate()
+            return None
+        return event
 
     def _handle_hold(self, is_pressed):
         """Hold mode: hold key to record, release to stop."""
@@ -337,22 +388,22 @@ class HotkeyListener:
         self._cancel_polling()
         self._stop_esc_polling()
 
-    def set_translate_keycode(self, keycode: int) -> None:
-        """Live-update the translate hotkey."""
-        if keycode == self._translate_keycode:
+    def set_translate_combo(self, combo: str) -> None:
+        """Live-update the translate shortcut. Unknown ids are ignored."""
+        if combo == self._translate_combo or combo not in TRANSLATE_COMBOS:
             return
-        log.info("Translate hotkey: keycode %s → %d",
-                 self._translate_keycode, keycode)
-        self._translate_keycode = keycode
-        self._last_translate_tap = 0.0
+        log.info("Translate shortcut: %s → %s",
+                 translate_combo_label(self._translate_combo),
+                 translate_combo_label(combo))
+        self._translate_combo = combo
 
     def stop(self):
         self._cancel_polling()
         self._stop_esc_polling()
-        if self._global_monitor:
-            NSEvent.removeMonitor_(self._global_monitor)
-            self._global_monitor = None
-        if self._local_monitor:
-            NSEvent.removeMonitor_(self._local_monitor)
-            self._local_monitor = None
+        for attr in ("_global_monitor", "_local_monitor",
+                     "_key_global_monitor", "_key_local_monitor"):
+            monitor = getattr(self, attr, None)
+            if monitor is not None:
+                NSEvent.removeMonitor_(monitor)
+                setattr(self, attr, None)
         log.info("Hotkey monitors removed")

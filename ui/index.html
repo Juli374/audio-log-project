@@ -637,16 +637,15 @@ body {
         </select>
     </div>
     <div class="setting-group">
-        <div class="setting-label">Клавиша перевода</div>
-        <div class="setting-description">Выдели текст в любом приложении и дважды нажми эту клавишу — перевод появится по центру экрана. Должна отличаться от клавиши записи</div>
-        <select class="setting-select" id="settingTranslateHotkeyKeycode">
-            <option value="59">Left ⌃ (Control)</option>
-            <option value="58">Left ⌥ (Option)</option>
-            <option value="54">Right ⌘ (Command)</option>
-            <option value="55">Left ⌘ (Command)</option>
-            <option value="61">Right ⌥ (Option)</option>
-            <option value="60">Right ⇧ (Shift)</option>
-            <option value="56">Left ⇧ (Shift)</option>
+        <div class="setting-label">Сочетание для перевода</div>
+        <div class="setting-description">Выдели текст в любом приложении и нажми это сочетание — перевод появится по центру экрана</div>
+        <select class="setting-select" id="settingTranslateCombo">
+            <option value="ctrl+opt+t">⌃⌥T (Control+Option+T)</option>
+            <option value="cmd+opt+t">⌘⌥T (Command+Option+T)</option>
+            <option value="ctrl+shift+t">⌃⇧T (Control+Shift+T)</option>
+            <option value="cmd+ctrl+t">⌘⌃T (Command+Control+T)</option>
+            <option value="ctrl+opt+d">⌃⌥D (Control+Option+D)</option>
+            <option value="cmd+opt+d">⌘⌥D (Command+Option+D)</option>
         </select>
     </div>
     <div class="setting-group">
@@ -932,7 +931,7 @@ const app = {
         document.getElementById('settingLanguage').value = s.language || 'ru';
         document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
         document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
-        document.getElementById('settingTranslateHotkeyKeycode').value = String(s.translate_hotkey_keycode ?? 59);
+        document.getElementById('settingTranslateCombo').value = s.translate_hotkey_combo || 'ctrl+opt+t';
         document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
         // Legacy settings.json may still hold "local" — that mode is gone.
@@ -953,16 +952,11 @@ const app = {
 
     saveSettings() {
         const shortKc = parseInt(document.getElementById('settingHotkeyKeycode').value) || 61;
-        const translateKc = parseInt(document.getElementById('settingTranslateHotkeyKeycode').value) || 59;
-        if (shortKc === translateKc) {
-            this.showToast('Клавиши записи и перевода должны отличаться');
-            return;
-        }
         const s = {
             language: document.getElementById('settingLanguage').value,
             hotkey_mode: document.getElementById('settingHotkeyMode').value,
             hotkey_keycode: shortKc,
-            translate_hotkey_keycode: translateKc,
+            translate_hotkey_combo: document.getElementById('settingTranslateCombo').value,
             translate_target: document.getElementById('settingTranslateTarget').value,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
             transcription_mode: document.getElementById('settingTranscriptionMode').value,

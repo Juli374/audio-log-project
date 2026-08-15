@@ -105,6 +105,7 @@ class LiveSetterTests(unittest.TestCase):
             config=config,
             on_activate=lambda: None,
             on_deactivate=lambda: None,
+            on_translate_toggle=lambda: None,
         )
 
     def test_set_keycode_updates_short_hotkey(self):
@@ -127,10 +128,41 @@ class LiveSetterTests(unittest.TestCase):
         hk.set_keycode(hk._keycode)
         self.assertTrue(hk._pressed)
 
-    def test_set_translate_keycode_updates_translate_hotkey(self):
+    def test_set_translate_combo_updates_shortcut(self):
         hk = self._make_hotkey()
-        hk.set_translate_keycode(55)  # Left Command
-        self.assertEqual(hk._translate_keycode, 55)
+        hk.set_translate_combo("cmd+opt+d")
+        self.assertEqual(hk._translate_combo, "cmd+opt+d")
+
+    def test_set_translate_combo_ignores_unknown(self):
+        hk = self._make_hotkey()
+        before = hk._translate_combo
+        hk.set_translate_combo("ctrl+alt+delete")
+        self.assertEqual(hk._translate_combo, before)
+
+    def test_translate_combo_matches_exact_modifiers(self):
+        from hotkey import (_FLAG_CONTROL, _FLAG_OPTION, _FLAG_SHIFT,
+                            _KEYCODE_T)
+
+        hk = self._make_hotkey()
+        hk.set_translate_combo("ctrl+opt+t")
+
+        match = MagicMock()
+        match.keyCode.return_value = _KEYCODE_T
+        match.modifierFlags.return_value = _FLAG_CONTROL | _FLAG_OPTION
+        self.assertTrue(hk._matches_translate(match))
+
+        # An extra modifier belongs to some other app's shortcut.
+        extra = MagicMock()
+        extra.keyCode.return_value = _KEYCODE_T
+        extra.modifierFlags.return_value = (
+            _FLAG_CONTROL | _FLAG_OPTION | _FLAG_SHIFT)
+        self.assertFalse(hk._matches_translate(extra))
+
+        # Right letter is required too.
+        other_key = MagicMock()
+        other_key.keyCode.return_value = 2  # D
+        other_key.modifierFlags.return_value = _FLAG_CONTROL | _FLAG_OPTION
+        self.assertFalse(hk._matches_translate(other_key))
 
     def test_after_set_keycode_new_event_dispatches(self):
         from hotkey import _FLAG_COMMAND
