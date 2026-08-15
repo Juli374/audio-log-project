@@ -128,41 +128,27 @@ class LiveSetterTests(unittest.TestCase):
         hk.set_keycode(hk._keycode)
         self.assertTrue(hk._pressed)
 
-    def test_set_translate_combo_updates_shortcut(self):
-        hk = self._make_hotkey()
-        hk.set_translate_combo("cmd+opt+d")
-        self.assertEqual(hk._translate_combo, "cmd+opt+d")
-
-    def test_set_translate_combo_ignores_unknown(self):
-        hk = self._make_hotkey()
-        before = hk._translate_combo
-        hk.set_translate_combo("ctrl+alt+delete")
-        self.assertEqual(hk._translate_combo, before)
-
-    def test_translate_combo_matches_exact_modifiers(self):
-        from hotkey import (_FLAG_CONTROL, _FLAG_OPTION, _FLAG_SHIFT,
-                            _KEYCODE_T)
+    def test_set_translate_shortcut_updates(self):
+        from hotkey import _FLAG_COMMAND
 
         hk = self._make_hotkey()
-        hk.set_translate_combo("ctrl+opt+t")
+        hk.set_translate_shortcut(17, _FLAG_COMMAND)  # ⌘T
+        self.assertEqual(hk._translate_key, 17)
+        self.assertEqual(hk._translate_mods, _FLAG_COMMAND)
 
-        match = MagicMock()
-        match.keyCode.return_value = _KEYCODE_T
-        match.modifierFlags.return_value = _FLAG_CONTROL | _FLAG_OPTION
-        self.assertTrue(hk._matches_translate(match))
+    def test_translate_default_is_option_d(self):
+        from hotkey import _FLAG_OPTION
 
-        # An extra modifier belongs to some other app's shortcut.
-        extra = MagicMock()
-        extra.keyCode.return_value = _KEYCODE_T
-        extra.modifierFlags.return_value = (
-            _FLAG_CONTROL | _FLAG_OPTION | _FLAG_SHIFT)
-        self.assertFalse(hk._matches_translate(extra))
+        hk = self._make_hotkey()
+        self.assertEqual(hk._translate_key, 2)          # D
+        self.assertEqual(hk._translate_mods, _FLAG_OPTION)
 
-        # Right letter is required too.
-        other_key = MagicMock()
-        other_key.keyCode.return_value = 2  # D
-        other_key.modifierFlags.return_value = _FLAG_CONTROL | _FLAG_OPTION
-        self.assertFalse(hk._matches_translate(other_key))
+    def test_shortcut_label(self):
+        from hotkey import _FLAG_COMMAND, _FLAG_OPTION, shortcut_label
+
+        self.assertEqual(shortcut_label(2, _FLAG_OPTION), "\u2325D")
+        self.assertEqual(
+            shortcut_label(17, _FLAG_COMMAND | _FLAG_OPTION), "\u2325\u2318T")
 
     def test_after_set_keycode_new_event_dispatches(self):
         from hotkey import _FLAG_COMMAND

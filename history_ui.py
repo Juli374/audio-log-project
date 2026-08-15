@@ -255,8 +255,7 @@ class HistoryWindow:
                 self._updater.apply_now()
 
         elif action == "save_settings":
-            from hotkey import (DEFAULT_TRANSLATE_COMBO, MODIFIER_KEY_FLAGS,
-                                TRANSLATE_COMBOS)
+            from hotkey import MODIFIER_KEY_FLAGS, _MODIFIER_MASK
 
             short_kc = int(data.get(
                 "hotkey_keycode", self._config.hotkey_keycode))
@@ -265,15 +264,17 @@ class HistoryWindow:
             if short_kc not in MODIFIER_KEY_FLAGS:
                 short_kc = self._config.hotkey_keycode
             # The translate shortcut is a key combination, so it cannot
-            # collide with the bare-modifier recording key.
-            translate_combo = str(data.get(
-                "translate_hotkey_combo",
-                getattr(self._config, "translate_hotkey_combo",
-                        DEFAULT_TRANSLATE_COMBO)))
-            if translate_combo not in TRANSLATE_COMBOS:
-                translate_combo = getattr(
-                    self._config, "translate_hotkey_combo",
-                    DEFAULT_TRANSLATE_COMBO)
+            # collide with the bare-modifier recording key. It must carry
+            # at least one modifier, otherwise a bare letter would be
+            # swallowed everywhere the user types.
+            translate_key = int(data.get(
+                "translate_hotkey_key", self._config.translate_hotkey_key))
+            translate_mods = (int(data.get(
+                "translate_hotkey_mods", self._config.translate_hotkey_mods))
+                & _MODIFIER_MASK)
+            if not translate_mods:
+                translate_key = self._config.translate_hotkey_key
+                translate_mods = self._config.translate_hotkey_mods
 
             settings = {
                 "language": str(data.get("language", "ru")),
@@ -288,7 +289,8 @@ class HistoryWindow:
                 "anthropic_api_key": str(data.get("anthropic_api_key", "")),
                 "cleanup_mode": str(data.get("cleanup_mode", "off")),
                 "target_language": str(data.get("target_language", "")),
-                "translate_hotkey_combo": translate_combo,
+                "translate_hotkey_key": translate_key,
+                "translate_hotkey_mods": translate_mods,
                 "translate_target": str(data.get("translate_target", "ru")),
                 "auto_update": bool(data.get("auto_update", True)),
             }
@@ -298,7 +300,8 @@ class HistoryWindow:
             if self._hotkey_listener is not None:
                 try:
                     self._hotkey_listener.set_keycode(short_kc)
-                    self._hotkey_listener.set_translate_combo(translate_combo)
+                    self._hotkey_listener.set_translate_shortcut(
+                        translate_key, translate_mods)
                 except Exception:
                     log.exception("Failed to live-apply hotkey changes")
             # The transcriber is picked once, at startup, from the mode in

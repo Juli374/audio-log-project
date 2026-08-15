@@ -470,6 +470,31 @@ body {
     padding-right: 36px;
 }
 
+.shortcut-btn {
+    padding: 10px 14px;
+    min-width: 120px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.shortcut-btn:hover {
+    border-color: var(--accent);
+}
+.shortcut-btn.recording {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+    font-weight: 500;
+    letter-spacing: 0;
+}
+
 .save-btn {
     display: inline-block;
     padding: 10px 24px;
@@ -638,15 +663,9 @@ body {
     </div>
     <div class="setting-group">
         <div class="setting-label">Сочетание для перевода</div>
-        <div class="setting-description">Выдели текст в любом приложении и нажми это сочетание — перевод появится по центру экрана</div>
-        <select class="setting-select" id="settingTranslateCombo">
-            <option value="ctrl+opt+t">⌃⌥T (Control+Option+T)</option>
-            <option value="cmd+opt+t">⌘⌥T (Command+Option+T)</option>
-            <option value="ctrl+shift+t">⌃⇧T (Control+Shift+T)</option>
-            <option value="cmd+ctrl+t">⌘⌃T (Command+Control+T)</option>
-            <option value="ctrl+opt+d">⌃⌥D (Control+Option+D)</option>
-            <option value="cmd+opt+d">⌘⌥D (Command+Option+D)</option>
-        </select>
+        <div class="setting-description">Выдели текст в любом приложении и нажми это сочетание — перевод появится по центру экрана. Нажми кнопку и набери своё сочетание: минимум один модификатор (⌘ ⌥ ⌃ ⇧) плюс клавиша</div>
+        <button class="shortcut-btn" id="settingTranslateShortcut"
+                onclick="app.recordShortcut()">⌥D</button>
     </div>
     <div class="setting-group">
         <div class="setting-label">Язык перевода</div>
@@ -925,13 +944,103 @@ const app = {
         }
     },
 
-    // ─── Settings (unchanged) ───
+    // ─── Translate shortcut recorder ───
+    // The user presses the combination they want and we store it as a
+    // macOS virtual keycode plus a modifier mask, the same pair the
+    // event tap compares against.
+
+    translateKey: 2,          // D
+    translateMods: 524288,    // Option
+    _recording: false,
+
+    // Browser KeyboardEvent.code → macOS virtual keycode.
+    KEYCODES: {
+        KeyA: 0, KeyB: 11, KeyC: 8, KeyD: 2, KeyE: 14, KeyF: 3, KeyG: 5,
+        KeyH: 4, KeyI: 34, KeyJ: 38, KeyK: 40, KeyL: 37, KeyM: 46, KeyN: 45,
+        KeyO: 31, KeyP: 35, KeyQ: 12, KeyR: 15, KeyS: 1, KeyT: 17, KeyU: 32,
+        KeyV: 9, KeyW: 13, KeyX: 7, KeyY: 16, KeyZ: 6,
+        Digit0: 29, Digit1: 18, Digit2: 19, Digit3: 20, Digit4: 21,
+        Digit5: 23, Digit6: 22, Digit7: 26, Digit8: 28, Digit9: 25,
+        Space: 49, Enter: 36, Tab: 48, Period: 47, Comma: 43, Slash: 44,
+        Minus: 27, Equal: 24, BracketLeft: 33, BracketRight: 30,
+        Quote: 39, Semicolon: 41, Backslash: 42, Backquote: 50,
+        F1: 122, F2: 120, F3: 99, F4: 118, F5: 96, F6: 97, F7: 98,
+        F8: 100, F9: 101, F10: 109, F11: 103, F12: 111,
+    },
+
+    keyName(code) {
+        for (const [name, kc] of Object.entries(this.KEYCODES)) {
+            if (kc !== code) continue;
+            if (name.startsWith('Key')) return name.slice(3);
+            if (name.startsWith('Digit')) return name.slice(5);
+            return name;
+        }
+        return '#' + code;
+    },
+
+    shortcutLabel(key, mods) {
+        let out = '';
+        if (mods & 262144) out += '⌃';
+        if (mods & 524288) out += '⌥';
+        if (mods & 131072) out += '⇧';
+        if (mods & 1048576) out += '⌘';
+        return out + this.keyName(key);
+    },
+
+    renderShortcut() {
+        const btn = document.getElementById('settingTranslateShortcut');
+        if (btn) btn.textContent = this.shortcutLabel(this.translateKey, this.translateMods);
+    },
+
+    recordShortcut() {
+        if (this._recording) return;
+        this._recording = true;
+        const btn = document.getElementById('settingTranslateShortcut');
+        btn.classList.add('recording');
+        btn.textContent = 'Нажми сочетание…';
+
+        const finish = () => {
+            this._recording = false;
+            btn.classList.remove('recording');
+            document.removeEventListener('keydown', onKey, true);
+            this.renderShortcut();
+        };
+
+        const onKey = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.key === 'Escape') return finish();
+
+            const code = this.KEYCODES[e.code];
+            if (code === undefined) return;   // modifier alone, keep waiting
+
+            let mods = 0;
+            if (e.ctrlKey) mods |= 262144;
+            if (e.altKey) mods |= 524288;
+            if (e.shiftKey) mods |= 131072;
+            if (e.metaKey) mods |= 1048576;
+            if (!mods) {
+                btn.textContent = 'Нужен модификатор ⌘⌥⌃⇧';
+                return;
+            }
+
+            this.translateKey = code;
+            this.translateMods = mods;
+            finish();
+        };
+
+        document.addEventListener('keydown', onKey, true);
+    },
+
+    // ─── Settings ───
 
     applySettings(s) {
         document.getElementById('settingLanguage').value = s.language || 'ru';
         document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
         document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
-        document.getElementById('settingTranslateCombo').value = s.translate_hotkey_combo || 'ctrl+opt+t';
+        this.translateKey = (s.translate_hotkey_key ?? 2);
+        this.translateMods = (s.translate_hotkey_mods ?? 524288);
+        this.renderShortcut();
         document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
         // Legacy settings.json may still hold "local" — that mode is gone.
@@ -956,7 +1065,8 @@ const app = {
             language: document.getElementById('settingLanguage').value,
             hotkey_mode: document.getElementById('settingHotkeyMode').value,
             hotkey_keycode: shortKc,
-            translate_hotkey_combo: document.getElementById('settingTranslateCombo').value,
+            translate_hotkey_key: this.translateKey,
+            translate_hotkey_mods: this.translateMods,
             translate_target: document.getElementById('settingTranslateTarget').value,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
             transcription_mode: document.getElementById('settingTranscriptionMode').value,

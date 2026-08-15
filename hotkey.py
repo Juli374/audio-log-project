@@ -6,9 +6,22 @@ import time
 from AppKit import NSEvent
 from PyObjCTools import AppHelper
 from Quartz import (
+    CFMachPortCreateRunLoopSource,
+    CFRunLoopAddSource,
+    CFRunLoopGetMain,
+    CGEventGetFlags,
+    CGEventGetIntegerValueField,
     CGEventSourceFlagsState,
     CGEventSourceKeyState,
+    CGEventTapCreate,
+    CGEventTapEnable,
+    kCFRunLoopCommonModes,
+    kCGEventKeyDown,
     kCGEventSourceStateHIDSystemState,
+    kCGEventTapOptionDefault,
+    kCGHeadInsertEventTap,
+    kCGKeyboardEventKeycode,
+    kCGSessionEventTap,
 )
 from utils import get_logger
 
@@ -16,10 +29,6 @@ log = get_logger(__name__)
 
 # NSEventMaskFlagsChanged
 _FLAGS_CHANGED_MASK = 1 << 12
-
-# NSEventMaskKeyDown — used for the translate shortcut, which is a real
-# key combination rather than a bare modifier.
-_KEY_DOWN_MASK = 1 << 10
 
 # Only the device-independent modifier bits matter when matching a
 # shortcut; caps lock, fn and the left/right distinction must be ignored
@@ -65,30 +74,50 @@ MODIFIER_KEY_FLAGS: dict[int, int] = {
 }
 
 # ── Translate shortcut ──
-# A modifier-only trigger is not usable here: double-tapping Control or
-# Command collides with other apps' global shortcuts (Claude opens on a
-# double Control) and with ordinary typing. So the translate action uses a
-# genuine combination. Only combinations that macOS and the common apps
-# leave alone are offered — ⌘D is "bookmark" in browsers, ⌃⌘D is Look Up.
-_KEYCODE_T = 17
+# Stored as a key + modifier mask, so the user can record any combination
+# they like instead of picking from a fixed list.
+#
+# It is caught with a CGEventTap rather than an NSEvent monitor. A monitor
+# only observes: the keystroke still reaches the focused app, so ⌥D would
+# also type "∂" into the document and ⌃⌥T would still open Google Docs'
+# accessibility dialog. A tap consumes the event, which is what a global
+# shortcut has to do.
 _KEYCODE_D = 2
 
-TRANSLATE_COMBOS: dict[str, tuple[int, int, str]] = {
-    "ctrl+opt+t":   (_KEYCODE_T, _FLAG_CONTROL | _FLAG_OPTION,  "⌃⌥T"),
-    "cmd+opt+t":    (_KEYCODE_T, _FLAG_COMMAND | _FLAG_OPTION,  "⌘⌥T"),
-    "ctrl+shift+t": (_KEYCODE_T, _FLAG_CONTROL | _FLAG_SHIFT,   "⌃⇧T"),
-    "cmd+ctrl+t":   (_KEYCODE_T, _FLAG_COMMAND | _FLAG_CONTROL, "⌘⌃T"),
-    "ctrl+opt+d":   (_KEYCODE_D, _FLAG_CONTROL | _FLAG_OPTION,  "⌃⌥D"),
-    "cmd+opt+d":    (_KEYCODE_D, _FLAG_COMMAND | _FLAG_OPTION,  "⌘⌥D"),
+DEFAULT_TRANSLATE_KEY = _KEYCODE_D
+DEFAULT_TRANSLATE_MODS = _FLAG_OPTION          # ⌥D
+
+# Tap re-enable reasons (Quartz doesn't export these as constants).
+_TAP_DISABLED_BY_TIMEOUT = 0xFFFFFFFE
+_TAP_DISABLED_BY_USER = 0xFFFFFFFF
+
+# keycode → printable name, for showing the shortcut back to the user.
+_KEYCODE_NAMES: dict[int, str] = {
+    0: "A", 11: "B", 8: "C", 2: "D", 14: "E", 3: "F", 5: "G", 4: "H",
+    34: "I", 38: "J", 40: "K", 37: "L", 46: "M", 45: "N", 31: "O", 35: "P",
+    12: "Q", 15: "R", 1: "S", 17: "T", 32: "U", 9: "V", 13: "W", 7: "X",
+    16: "Y", 6: "Z",
+    29: "0", 18: "1", 19: "2", 20: "3", 21: "4", 23: "5", 22: "6", 26: "7",
+    28: "8", 25: "9",
+    49: "Space", 36: "Return", 48: "Tab", 47: ".", 43: ",", 44: "/",
+    27: "-", 24: "=", 33: "[", 30: "]", 39: "'", 41: ";", 42: "\\", 50: "`",
+    122: "F1", 120: "F2", 99: "F3", 118: "F4", 96: "F5", 97: "F6",
+    98: "F7", 100: "F8", 101: "F9", 109: "F10", 103: "F11", 111: "F12",
 }
 
-DEFAULT_TRANSLATE_COMBO = "ctrl+opt+t"
 
-
-def translate_combo_label(name: str) -> str:
-    """Human-readable form of a combo id, e.g. 'ctrl+opt+t' → '⌃⌥T'."""
-    entry = TRANSLATE_COMBOS.get(name)
-    return entry[2] if entry else name
+def shortcut_label(keycode: int, mods: int) -> str:
+    """Render a shortcut the way macOS shows it, e.g. (2, option) → '⌥D'."""
+    out = ""
+    if mods & _FLAG_CONTROL:
+        out += "⌃"
+    if mods & _FLAG_OPTION:
+        out += "⌥"
+    if mods & _FLAG_SHIFT:
+        out += "⇧"
+    if mods & _FLAG_COMMAND:
+        out += "⌘"
+    return out + _KEYCODE_NAMES.get(keycode, f"#{keycode}")
 
 
 # Display labels for the menubar UI. Order here is the order shown to
@@ -148,15 +177,17 @@ class HotkeyListener:
         self._on_cancel = on_cancel
         self._on_translate_toggle = on_translate_toggle
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
-        self._translate_combo = getattr(
-            config, "translate_hotkey_combo", DEFAULT_TRANSLATE_COMBO)
+        self._translate_key = getattr(
+            config, "translate_hotkey_key", DEFAULT_TRANSLATE_KEY)
+        self._translate_mods = getattr(
+            config, "translate_hotkey_mods", DEFAULT_TRANSLATE_MODS)
         self._pressed = False
         self._recording = False  # for toggle mode
         self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
         self._global_monitor = None
         self._local_monitor = None
-        self._key_global_monitor = None
-        self._key_local_monitor = None
+        self._tap = None
+        self._tap_source = None
         self._poll_timer: threading.Timer | None = None
         self._esc_stop = threading.Event()
 
@@ -172,18 +203,8 @@ class HotkeyListener:
             _FLAGS_CHANGED_MASK,
             self._handle_local,
         )
-        # Separate pair for the translate combination: key-down events are a
-        # different mask, and the local one must swallow the event so the
-        # focused app does not also act on it.
         if self._on_translate_toggle is not None:
-            self._key_global_monitor = (
-                NSEvent.addGlobalMonitorForEventsMatchingMask_handler_(
-                    _KEY_DOWN_MASK, self._handle_key_down))
-            self._key_local_monitor = (
-                NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
-                    _KEY_DOWN_MASK, self._handle_key_down_local))
-            log.info("Translate shortcut: %s",
-                     translate_combo_label(self._translate_combo))
+            self._install_translate_tap()
 
         if self._global_monitor and self._local_monitor:
             log.info("Hotkey monitors installed (global + local, keycode %d)",
@@ -245,37 +266,62 @@ class HotkeyListener:
             else:
                 self._handle_hold(is_pressed)
 
-    def _matches_translate(self, event) -> bool:
-        """True if this key-down is exactly the translate combination."""
-        entry = TRANSLATE_COMBOS.get(self._translate_combo)
-        if entry is None or self._on_translate_toggle is None:
-            return False
-        keycode, required, _ = entry
-        if event.keyCode() != keycode:
-            return False
-        # Exact match on the modifier set: ⌃⌥T must not fire on ⌃⌥⇧T,
-        # which may well be another app's shortcut.
-        return (event.modifierFlags() & _MODIFIER_MASK) == required
+    # ── Translate shortcut (CGEventTap) ──
+
+    def _install_translate_tap(self) -> None:
+        """Install a session-wide tap that consumes the translate shortcut."""
+        mask = 1 << kCGEventKeyDown
+        self._tap = CGEventTapCreate(
+            kCGSessionEventTap, kCGHeadInsertEventTap,
+            kCGEventTapOptionDefault, mask, self._tap_callback, None)
+
+        if not self._tap:
+            log.error(
+                "Translate shortcut unavailable: could not create event tap. "
+                "Grant Accessibility permission to AudioLog.")
+            return
+
+        self._tap_source = CFMachPortCreateRunLoopSource(None, self._tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), self._tap_source,
+                           kCFRunLoopCommonModes)
+        CGEventTapEnable(self._tap, True)
+        log.info("Translate shortcut: %s",
+                 shortcut_label(self._translate_key, self._translate_mods))
+
+    def _tap_callback(self, proxy, event_type, event, refcon):
+        """Runs for every key-down in the session. Must stay fast.
+
+        Returning None swallows the event, which is how the shortcut is
+        kept from reaching the focused app.
+        """
+        # macOS disables a tap that takes too long; re-arm and move on.
+        if event_type in (_TAP_DISABLED_BY_TIMEOUT, _TAP_DISABLED_BY_USER):
+            log.warning("Event tap disabled by system — re-enabling")
+            if self._tap is not None:
+                CGEventTapEnable(self._tap, True)
+            return event
+
+        try:
+            keycode = CGEventGetIntegerValueField(
+                event, kCGKeyboardEventKeycode)
+            flags = CGEventGetFlags(event) & _MODIFIER_MASK
+            # Exact modifier match: ⌥D must not fire on ⇧⌥D, which is a
+            # different shortcut somewhere else.
+            if keycode == self._translate_key and flags == self._translate_mods:
+                self._fire_translate()
+                return None
+        except Exception:
+            log.exception("Error in event tap")
+
+        return event
 
     def _fire_translate(self) -> None:
         log.info("Translate shortcut fired: %s",
-                 translate_combo_label(self._translate_combo))
+                 shortcut_label(self._translate_key, self._translate_mods))
         try:
             AppHelper.callAfter(self._on_translate_toggle)
         except Exception:
             log.exception("Error in on_translate_toggle")
-
-    def _handle_key_down(self, event):
-        """Global monitor: key-downs while another app is focused."""
-        if self._matches_translate(event):
-            self._fire_translate()
-
-    def _handle_key_down_local(self, event):
-        """Local monitor: swallow the event so our own UI doesn't see it."""
-        if self._matches_translate(event):
-            self._fire_translate()
-            return None
-        return event
 
     def _handle_hold(self, is_pressed):
         """Hold mode: hold key to record, release to stop."""
@@ -388,22 +434,26 @@ class HotkeyListener:
         self._cancel_polling()
         self._stop_esc_polling()
 
-    def set_translate_combo(self, combo: str) -> None:
-        """Live-update the translate shortcut. Unknown ids are ignored."""
-        if combo == self._translate_combo or combo not in TRANSLATE_COMBOS:
+    def set_translate_shortcut(self, keycode: int, mods: int) -> None:
+        """Live-update the translate shortcut. The tap stays installed."""
+        if keycode == self._translate_key and mods == self._translate_mods:
             return
         log.info("Translate shortcut: %s → %s",
-                 translate_combo_label(self._translate_combo),
-                 translate_combo_label(combo))
-        self._translate_combo = combo
+                 shortcut_label(self._translate_key, self._translate_mods),
+                 shortcut_label(keycode, mods))
+        self._translate_key = keycode
+        self._translate_mods = mods
 
     def stop(self):
         self._cancel_polling()
         self._stop_esc_polling()
-        for attr in ("_global_monitor", "_local_monitor",
-                     "_key_global_monitor", "_key_local_monitor"):
+        for attr in ("_global_monitor", "_local_monitor"):
             monitor = getattr(self, attr, None)
             if monitor is not None:
                 NSEvent.removeMonitor_(monitor)
                 setattr(self, attr, None)
+        if self._tap is not None:
+            CGEventTapEnable(self._tap, False)
+            self._tap = None
+            self._tap_source = None
         log.info("Hotkey monitors removed")

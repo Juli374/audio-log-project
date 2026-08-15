@@ -72,9 +72,11 @@ class Config:
     # translation appears centred on screen (see translate_popup.py).
     # A real key combination, not a bare modifier: double-tapping Control
     # or Command collides with other apps' global shortcuts and with normal
-    # typing. Valid ids live in hotkey.TRANSLATE_COMBOS.
+    # typing. Stored as key + modifier mask so any combination can be
+    # recorded from the settings screen. Default ⌥D.
     translate_enabled: bool = True
-    translate_hotkey_combo: str = "ctrl+opt+t"  # ⌃⌥T
+    translate_hotkey_key: int = 2               # D
+    translate_hotkey_mods: int = 1 << 19        # Option
     translate_target: str = "ru"                # language to translate into
 
     # ── Auto-update ──
@@ -125,7 +127,8 @@ class Config:
             "cleanup_mode": self.cleanup_mode,
             "target_language": self.target_language,
             "translate_enabled": self.translate_enabled,
-            "translate_hotkey_combo": self.translate_hotkey_combo,
+            "translate_hotkey_key": self.translate_hotkey_key,
+            "translate_hotkey_mods": self.translate_hotkey_mods,
             "translate_target": self.translate_target,
             "auto_update": self.auto_update,
             "auto_update_silent": self.auto_update_silent,
@@ -169,8 +172,10 @@ class Config:
             self.target_language = str(settings["target_language"])
         if "translate_enabled" in settings:
             self.translate_enabled = bool(settings["translate_enabled"])
-        if "translate_hotkey_combo" in settings:
-            self.translate_hotkey_combo = str(settings["translate_hotkey_combo"])
+        if "translate_hotkey_key" in settings:
+            self.translate_hotkey_key = int(settings["translate_hotkey_key"])
+        if "translate_hotkey_mods" in settings:
+            self.translate_hotkey_mods = int(settings["translate_hotkey_mods"])
         if "translate_target" in settings:
             self.translate_target = str(settings["translate_target"])
         if "auto_update" in settings:
