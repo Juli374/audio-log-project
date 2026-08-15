@@ -2,7 +2,6 @@
 
 import threading
 import time
-from pathlib import Path
 
 import AppKit
 import rumps
@@ -13,11 +12,9 @@ from config import Config
 from feedback import Feedback
 from history_ui import HistoryWindow
 from hotkey import HotkeyListener
-from long_transcriber import LongTranscriber
 from output import paste_text
 from overlay import Overlay
 from recorder import Recorder
-from session_recorder import SessionRecorder, SessionRecording
 from transcriber import create_transcriber
 from translate_popup import TranslateController
 from updater import Updater
@@ -35,290 +32,11 @@ STATUS_ITEM_AUTOSAVE = "AudioLogStatusItem"
 ICON_IDLE = "idle"
 ICON_RECORDING = "recording"
 ICON_TRANSCRIBING = "processing"
-ICON_SESSION_RECORDING = "session"
-ICON_SESSION_PROCESSING = "processing"
 
 
 def _icon_file(state: str) -> str:
     from utils import resource_path
     return str(resource_path() / "assets" / "menubar" / f"{state}.png")
-
-
-def _format_duration(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    if h > 0:
-        return f"{h:02d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
-
-
-class SessionController:
-    """Long continuous recording + chunked async transcription.
-
-    Runs alongside the short-dictation pipeline (Recorder). Only one of
-    the two may hold the microphone at a time — conflict is checked at
-    `start()` on both sides.
-
-    State machine:
-        idle ─toggle(start)→ recording ─toggle(stop)→ transcribing ─done→ idle
-         └───────────────── cancel ──────────────────┘
-    """
-
-    def __init__(self, config: Config, base_transcriber, history_window,
-                 feedback, menubar_app) -> None:
-        self._config = config
-        self._recorder = SessionRecorder(config)
-        self._long_transcriber = LongTranscriber(base_transcriber, config)
-        self._history_window = history_window
-        self._feedback = feedback
-        self._menubar = menubar_app
-
-        self._state: str = "idle"  # idle | recording | transcribing
-        self._start_time: float = 0.0
-        self._hard_stop_timer: threading.Timer | None = None
-        self._ui_timer_stop = threading.Event()
-
-    @property
-    def state(self) -> str:
-        return self._state
-
-    @property
-    def is_busy(self) -> bool:
-        return self._state != "idle"
-
-    # ── main hotkey entry point ──
-
-    def toggle(self) -> None:
-        """Called by Left Option double-tap. Start if idle, stop if recording."""
-        if self._state == "idle":
-            self.start()
-        elif self._state == "recording":
-            self.stop()
-        else:
-            # transcribing — brief overlay, don't interrupt
-            self._menubar._overlay.show(
-                "Дождитесь завершения…", state="process")
-            self._menubar._auto_hide_overlay(delay=2.5)
-
-    # ── lifecycle ──
-
-    def start(self) -> None:
-        """Start a new long-recording session. Main thread."""
-        # Conflict check: can't record while short dictation is active
-        if self._menubar._is_recording or self._menubar._is_processing:
-            log.warning("Session start blocked: short dictation is active")
-            self._menubar._overlay.show(
-                "Идёт диктовка — подождите", state="error")
-            self._menubar._auto_hide_overlay(delay=3.0)
-            return
-        if self._state != "idle":
-            return
-
-        self._state = "recording"
-        try:
-            meta = self._recorder.start()
-        except Exception:
-            log.exception("Failed to start session recording")
-            self._state = "idle"
-            AppKit.NSBeep()
-            self._menubar._overlay.show("Ошибка записи", state="error")
-            self._menubar._auto_hide_overlay(delay=3.0)
-            return
-
-        self._start_time = time.monotonic()
-        self._feedback.on_record_start()
-        self._update_title()
-        self._menubar._overlay.show("Сессия 00:00", state="record")
-        # Hide the "started" overlay quickly — menubar title shows live time
-        self._menubar._auto_hide_overlay(delay=2.0)
-        self._start_ui_timer()
-        self._start_hard_stop_watchdog()
-        self._history_window.notify_session_update()
-        log.info("Session started (id=%d)", meta.session_id)
-
-    def stop(self) -> None:
-        """Stop recording, kick off transcription in worker thread. Main thread."""
-        if self._state != "recording":
-            return
-        self._stop_ui_timer()
-        self._stop_hard_stop_watchdog()
-        self._feedback.on_record_stop()
-        self._state = "transcribing"
-        self._update_title()
-        self._menubar._overlay.show("Обработка сессии…", state="process")
-
-        def _worker():
-            try:
-                recording = self._recorder.stop()
-            except Exception:
-                log.exception("Failed to stop session recorder")
-                self._state = "idle"
-                AppHelper.callAfter(self._update_title)
-                AppHelper.callAfter(self._menubar._overlay.hide)
-                return
-
-            if recording.duration_sec < 1.0:
-                log.warning("Session too short (%.1fs) — skipping transcription",
-                            recording.duration_sec)
-                db.session_set_status(
-                    recording.session_id, "error",
-                    error="Recording too short")
-                self._state = "idle"
-                AppHelper.callAfter(self._update_title)
-                AppHelper.callAfter(
-                    lambda: self._menubar._overlay.show(
-                        "Слишком коротко", state="error"))
-                AppHelper.callAfter(
-                    lambda: self._menubar._auto_hide_overlay(delay=3.0))
-                self._history_window.notify_session_update()
-                return
-
-            self._process(recording)
-
-        threading.Thread(target=_worker, daemon=True,
-                         name="session-stop").start()
-
-    def cancel(self) -> None:
-        """Discard current recording. Menu action."""
-        if self._state != "recording":
-            return
-        self._stop_ui_timer()
-        self._stop_hard_stop_watchdog()
-        self._feedback.on_record_stop()
-        self._state = "idle"
-
-        def _do():
-            try:
-                self._recorder.cancel()
-            except Exception:
-                log.exception("Session cancel failed")
-            self._history_window.notify_session_update()
-
-        threading.Thread(target=_do, daemon=True).start()
-        self._update_title()
-        self._menubar._overlay.show("Сессия отменена", state="error")
-        self._menubar._auto_hide_overlay(delay=2.5)
-
-    # ── worker: transcribe a completed recording ──
-
-    def _process(self, recording: SessionRecording) -> None:
-        """Runs in worker thread after recording stopped."""
-        session_id = recording.session_id
-        try:
-            def progress(done: int, total: int) -> None:
-                db.session_set_progress(session_id, done, total)
-                AppHelper.callAfter(
-                    lambda: self._menubar._overlay.show(
-                        f"Чанк {done}/{total}", state="process"))
-                self._history_window.notify_session_update()
-
-            text = self._long_transcriber.transcribe_file(
-                recording.audio_path, progress_cb=progress)
-            db.session_set_text(session_id, text)
-            log.info("Session %d transcribed: %d chars",
-                     session_id, len(text))
-
-            preview = (text[:80].replace("\n", " ")
-                       if text else "(пусто)")
-            duration_str = _format_duration(recording.duration_sec)
-
-            def _notify_done():
-                self._menubar._overlay.show("Сессия готова", state="done")
-                self._menubar._auto_hide_overlay(delay=3.0)
-                try:
-                    rumps.notification(
-                        title="Сессия готова",
-                        subtitle=duration_str,
-                        message=preview,
-                    )
-                except Exception:
-                    log.exception("rumps.notification failed")
-            AppHelper.callAfter(_notify_done)
-
-            if self._config.session_auto_delete_audio:
-                try:
-                    recording.audio_path.unlink()
-                    log.info("Auto-deleted session WAV: %s",
-                             recording.audio_path)
-                except Exception:
-                    log.exception("Failed to auto-delete session WAV")
-
-        except Exception:
-            log.exception("Session %d transcription failed", session_id)
-            db.session_set_status(
-                session_id, "error",
-                error="Transcription failed — see logs")
-            AppKit.NSBeep()
-            AppHelper.callAfter(
-                lambda: self._menubar._overlay.show(
-                    "Ошибка транскрибации", state="error"))
-            AppHelper.callAfter(
-                lambda: self._menubar._auto_hide_overlay(delay=5.0))
-        finally:
-            self._state = "idle"
-            AppHelper.callAfter(self._update_title)
-            self._history_window.notify_session_update()
-
-    # ── title / UI timer ──
-
-    def _update_title(self) -> None:
-        """Update menubar title + menu item label. Safe to call from any thread."""
-        def _do():
-            # Don't clobber short-dictation icon
-            if self._menubar._is_recording or self._menubar._is_processing:
-                return
-            if self._state == "recording":
-                elapsed = time.monotonic() - self._start_time
-                # Icon shows the state, the title carries the running clock.
-                self._menubar.set_icon(ICON_SESSION_RECORDING,
-                                       _format_duration(elapsed))
-                if self._menubar._session_menu is not None:
-                    self._menubar._session_menu.title = "⏹ Остановить сессию"
-            elif self._state == "transcribing":
-                self._menubar.set_icon(ICON_SESSION_PROCESSING)
-                if self._menubar._session_menu is not None:
-                    self._menubar._session_menu.title = "⚙️ Обработка сессии…"
-            else:
-                self._menubar.set_icon(ICON_IDLE)
-                if self._menubar._session_menu is not None:
-                    self._menubar._session_menu.title = "📼 Начать сессию"
-        AppHelper.callAfter(_do)
-
-    def _start_ui_timer(self) -> None:
-        """Background thread refreshing menubar title every 1s."""
-        self._ui_timer_stop.clear()
-
-        def loop():
-            while not self._ui_timer_stop.wait(1.0):
-                if self._state != "recording":
-                    return
-                self._update_title()
-
-        threading.Thread(target=loop, daemon=True,
-                         name="session-ui-timer").start()
-
-    def _stop_ui_timer(self) -> None:
-        self._ui_timer_stop.set()
-
-    # ── safety: hard-stop at session_max_hours ──
-
-    def _start_hard_stop_watchdog(self) -> None:
-        max_sec = self._config.session_max_hours * 3600
-
-        def fire():
-            log.warning("Session hard-stop: %d hours exceeded",
-                        self._config.session_max_hours)
-            AppHelper.callAfter(self.stop)
-
-        self._hard_stop_timer = threading.Timer(max_sec, fire)
-        self._hard_stop_timer.daemon = True
-        self._hard_stop_timer.start()
-
-    def _stop_hard_stop_watchdog(self) -> None:
-        if self._hard_stop_timer is not None:
-            self._hard_stop_timer.cancel()
-            self._hard_stop_timer = None
 
 
 class MenuBarApp(rumps.App):
@@ -348,16 +66,10 @@ class MenuBarApp(rumps.App):
         self._ready = False
 
         db.init_db()
-        db.init_sessions_table()
 
         self._hotkey: HotkeyListener | None = None
 
-        # SessionController is created lazily after transcriber loads —
-        # assigned in _load_model(). Before then, session hotkey is a no-op.
-        self._session: SessionController | None = None
-        self._session_menu: rumps.MenuItem | None = None
-
-        self._status_item = rumps.MenuItem("⏳ Загрузка модели…")
+        self._status_item = rumps.MenuItem("⏳ Запуск…")
         self._status_item.set_callback(None)
         self._lang_ru = rumps.MenuItem(
             "🇷🇺 Русский", callback=self._select_ru)
@@ -366,10 +78,6 @@ class MenuBarApp(rumps.App):
         self._lang_uk = rumps.MenuItem(
             "🇺🇦 Українська (переклад)", callback=self._select_uk)
         self._update_lang_checks()
-        self._session_menu = rumps.MenuItem(
-            "📼 Начать сессию", callback=self._toggle_session)
-        self._session_cancel_menu = rumps.MenuItem(
-            "✕ Отменить сессию", callback=self._cancel_session)
         self._updater: Updater | None = None
         self.menu = [
             self._status_item,
@@ -377,9 +85,6 @@ class MenuBarApp(rumps.App):
             self._lang_ru,
             self._lang_en,
             self._lang_uk,
-            None,
-            self._session_menu,
-            self._session_cancel_menu,
             None,
             rumps.MenuItem("🌐 Перевести выделенное",
                            callback=self._translate_menu),
@@ -423,13 +128,6 @@ class MenuBarApp(rumps.App):
         if self._is_processing:
             self._overlay.show("Подождите…", state="process")
             # Reset hotkey toggle — we didn't actually start recording
-            if self._hotkey:
-                self._hotkey.reset_toggle()
-            return
-        if self._session is not None and self._session.is_busy:
-            # Long session holds the mic — refuse short dictation
-            self._overlay.show("Идёт сессия", state="error")
-            self._auto_hide_overlay(delay=2.5)
             if self._hotkey:
                 self._hotkey.reset_toggle()
             return
@@ -620,42 +318,18 @@ class MenuBarApp(rumps.App):
     def _load_model(self) -> None:
         """Runs in background thread."""
         log.info("Starting audio-log-project…")
-        if self._config.transcription_mode in ("api", "groq"):
-            self._transcriber.load_model()
-            self._ready = True
-            label = "Groq" if self._config.transcription_mode == "groq" else "API"
-            self._set_state(ICON_IDLE, f"Готов к записи ({label})")
-            log.info("%s mode — ready. Listening for hotkey…", label)
-        else:
-            self._config.ensure_model_dir()
-            self._transcriber.load_model()
-            self._ready = True
-            self._set_state(ICON_IDLE, "Готов к записи")
-            log.info("Model loaded. Listening for hotkey…")
-
-        # Create SessionController now that transcriber is loaded.
-        # Done after model load because LongTranscriber needs a working base.
-        if self._config.session_enabled:
-            self._session = SessionController(
-                config=self._config,
-                base_transcriber=self._transcriber,
-                history_window=self._history_window,
-                feedback=self._feedback,
-                menubar_app=self,
-            )
-            # Share the long transcriber with the history window so the
-            # "Retry" button in the Sessions tab can re-run transcription.
-            self._history_window._long_transcriber = (
-                self._session._long_transcriber)
-            log.info("SessionController ready (hotkey: Left Option double-tap)")
+        self._transcriber.load_model()
+        self._ready = True
+        label = "Groq" if self._config.transcription_mode == "groq" else "API"
+        self._set_state(ICON_IDLE, f"Готов к записи ({label})")
+        log.info("%s mode — ready. Listening for hotkey…", label)
 
     def _rebuild_transcriber(self) -> None:
         """Rebuild the transcriber after the mode changed in Settings.
 
         Called from the settings handler on the main thread; the actual
-        model load happens on a worker because the local backend takes
-        seconds. Skipped mid-recording — swapping the engine underneath an
-        in-flight transcription would lose it.
+        work happens on a worker. Skipped mid-recording — swapping the
+        engine underneath an in-flight transcription would lose it.
         """
         if self._is_recording or self._is_processing:
             log.warning("Mode changed while busy — new mode applies after "
@@ -665,8 +339,6 @@ class MenuBarApp(rumps.App):
         def _worker():
             try:
                 new = create_transcriber(self._config)
-                if self._config.transcription_mode == "local":
-                    self._config.ensure_model_dir()
                 new.load_model()
             except Exception:
                 log.exception("Could not build transcriber for mode %s",
@@ -675,12 +347,6 @@ class MenuBarApp(rumps.App):
 
             self._transcriber = new
             self._history_window._transcriber = new
-            # The session pipeline wraps the same base transcriber.
-            if self._session is not None:
-                try:
-                    self._session._long_transcriber._base = new
-                except Exception:
-                    log.exception("Could not repoint session transcriber")
             log.info("Transcriber rebuilt: mode=%s",
                      self._config.transcription_mode)
 
@@ -716,18 +382,6 @@ class MenuBarApp(rumps.App):
     def _select_uk(self, _) -> None:
         self._set_target("uk")
 
-    def _toggle_session(self, _) -> None:
-        self._fire_session_toggle()
-
-    def _fire_session_toggle(self) -> None:
-        """Shared entry point: menu click and Left Option double-tap both
-        land here. Runs on main thread."""
-        if self._session is None:
-            self._overlay.show("Модель ещё загружается…", state="process")
-            self._auto_hide_overlay(delay=2.5)
-            return
-        self._session.toggle()
-
     def _fire_translate(self) -> None:
         """Translate hotkey and menu item both land here. Main thread only.
 
@@ -744,15 +398,6 @@ class MenuBarApp(rumps.App):
     def _translate_menu(self, _) -> None:
         self._fire_translate()
 
-    def _cancel_session(self, _) -> None:
-        if self._session is None:
-            return
-        if self._session.state != "recording":
-            self._overlay.show("Нечего отменять", state="error")
-            self._auto_hide_overlay(delay=2.0)
-            return
-        self._session.cancel()
-
     def _show_history(self, _) -> None:
         self._history_window.show()
 
@@ -761,8 +406,6 @@ class MenuBarApp(rumps.App):
     def _busy_for_update(self) -> bool:
         """True while anything would be lost by restarting."""
         if self._is_recording or self._is_processing:
-            return True
-        if self._session is not None and self._session.is_busy:
             return True
         if self._history_window._voice_recording:
             return True
@@ -918,7 +561,6 @@ class MenuBarApp(rumps.App):
             on_activate=self._on_activate,
             on_deactivate=self._on_deactivate,
             on_cancel=self._on_cancel,
-            on_long_toggle=self._fire_session_toggle,
             on_translate_toggle=self._fire_translate,
         )
         self._hotkey.start()

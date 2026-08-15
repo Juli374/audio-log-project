@@ -1,7 +1,6 @@
 """History window using NSWindow + WKWebView."""
 
 import json
-from pathlib import Path
 
 import objc
 import AppKit
@@ -48,7 +47,6 @@ class HistoryWindow:
         self._built = False
         self._recorder = None
         self._transcriber = None
-        self._long_transcriber = None  # set by MenuBarApp after SessionController is built
         self._hotkey_listener = None   # set by MenuBarApp after listener.start()
         self._updater = None           # set by MenuBarApp after updater.start()
         self._install_update_cb = None  # MenuBarApp quits the app, then swaps
@@ -142,57 +140,6 @@ class HistoryWindow:
             if self._webview and self._window and self._window.isVisible():
                 self._eval_js("app.onNewEntry()")
         AppHelper.callAfter(_do)
-
-    def notify_session_update(self) -> None:
-        """Notify the webview about a session state/progress change.
-
-        Safe to call from any thread. The JS handler re-fetches the
-        sessions list; if the sessions tab isn't active, it's a no-op."""
-        def _do():
-            if self._webview and self._window and self._window.isVisible():
-                self._eval_js(
-                    "if (window.app && app.onSessionUpdate) "
-                    "{ app.onSessionUpdate(); }")
-        AppHelper.callAfter(_do)
-
-    def _retry_session_worker(self, sid: int) -> None:
-        """Re-run transcription on an existing session. Background thread."""
-        if self._long_transcriber is None:
-            log.error("No LongTranscriber available — retry skipped")
-            db.session_set_status(sid, "error",
-                                  error="Transcriber not ready")
-            self.notify_session_update()
-            return
-
-        row = db.session_get(sid)
-        if not row or not row.get("audio_path"):
-            log.warning("Retry: session %d not found or has no audio_path", sid)
-            return
-
-        audio_path = Path(row["audio_path"])
-        if not audio_path.exists():
-            db.session_set_status(sid, "error", error="Audio file missing")
-            self.notify_session_update()
-            return
-
-        db.session_set_status(sid, "transcribing")
-        db.session_set_progress(sid, 0, 0)
-        self.notify_session_update()
-
-        try:
-            def progress(done: int, total: int) -> None:
-                db.session_set_progress(sid, done, total)
-                self.notify_session_update()
-
-            text = self._long_transcriber.transcribe_file(
-                audio_path, progress_cb=progress)
-            db.session_set_text(sid, text)
-            log.info("Session %d retry complete: %d chars", sid, len(text))
-        except Exception:
-            log.exception("Session %d retry failed", sid)
-            db.session_set_status(sid, "error",
-                                  error="Retry failed — see logs")
-        self.notify_session_update()
 
     def _eval_js(self, js: str) -> None:
         """Run JS in the webview."""
@@ -312,38 +259,29 @@ class HistoryWindow:
 
             short_kc = int(data.get(
                 "hotkey_keycode", self._config.hotkey_keycode))
-            long_kc = int(data.get(
-                "session_hotkey_keycode",
-                self._config.session_hotkey_keycode))
             # Reject unknown / conflicting keycodes — fall back silently
             # to current values rather than corrupting state.
             if short_kc not in MODIFIER_KEY_FLAGS:
                 short_kc = self._config.hotkey_keycode
-            if long_kc not in MODIFIER_KEY_FLAGS:
-                long_kc = self._config.session_hotkey_keycode
             translate_kc = int(data.get(
                 "translate_hotkey_keycode",
                 getattr(self._config, "translate_hotkey_keycode", 62)))
             if translate_kc not in MODIFIER_KEY_FLAGS:
                 translate_kc = getattr(
                     self._config, "translate_hotkey_keycode", 62)
-            if len({short_kc, long_kc, translate_kc}) < 3:
+            if short_kc == translate_kc:
                 self._send_response({
                     "action": "settings_error",
                     "error": "hotkey_conflict",
-                    "message": "Клавиши записи, сессии и перевода должны "
-                               "отличаться"})
+                    "message": "Клавиши записи и перевода должны отличаться"})
                 return
 
             settings = {
-                "model": str(data.get("model", "small")),
                 "language": str(data.get("language", "ru")),
-                "n_threads": int(data.get("n_threads", 4)),
                 "max_recording_seconds": int(data.get("max_recording_seconds", 300)),
                 "hotkey_mode": str(data.get("hotkey_mode", "hold")),
                 "hotkey_keycode": short_kc,
-                "session_hotkey_keycode": long_kc,
-                "transcription_mode": str(data.get("transcription_mode", "local")),
+                "transcription_mode": str(data.get("transcription_mode", "groq")),
                 "openai_api_key": str(data.get("openai_api_key", "")),
                 "openai_model": str(data.get("openai_model", "gpt-4o-mini-transcribe")),
                 "groq_api_key": str(data.get("groq_api_key", "")),
@@ -361,14 +299,13 @@ class HistoryWindow:
             if self._hotkey_listener is not None:
                 try:
                     self._hotkey_listener.set_keycode(short_kc)
-                    self._hotkey_listener.set_long_keycode(long_kc)
                     self._hotkey_listener.set_translate_keycode(translate_kc)
                 except Exception:
                     log.exception("Failed to live-apply hotkey changes")
             # The transcriber is picked once, at startup, from the mode in
-            # config. Switching Groq↔OpenAI↔local in the UI used to change
-            # nothing until a restart, so the app kept using the previous
-            # service and its key — exactly the "wrong key" symptom.
+            # config. Switching Groq↔OpenAI in the UI used to change nothing
+            # until a restart, so the app kept using the previous service and
+            # its key — exactly the "wrong key" symptom.
             if self._config.transcription_mode != previous_mode:
                 self._rebuild_transcriber()
             self._send_response({"action": "settings_saved"})

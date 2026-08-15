@@ -19,7 +19,7 @@ from AppKit import (
     NSBezierPath, NSBitmapImageRep, NSCalibratedRGBColorSpace, NSColor,
     NSGradient, NSGraphicsContext,
 )
-from Foundation import NSMakePoint, NSMakeRect
+from Foundation import NSMakeRect
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ASSETS = os.path.join(ROOT, "assets")
@@ -35,7 +35,6 @@ BRAND_BOTTOM = (46, 26, 138)
 WAVES = {
     "idle":       [0.30, 0.58, 1.00, 0.58, 0.30],
     "recording":  [0.55, 0.90, 1.00, 0.90, 0.55],
-    "session":    [0.42, 0.74, 1.00, 0.74, 0.42],
 }
 
 
@@ -153,18 +152,12 @@ def menubar_glyph(state, px=40):
         _dots(cx, cy, px * 0.62, black)
     else:
         _bars(cx, cy, px * 0.66, WAVES[state], px * 0.105, black)
-    if state == "session":
-        # A baseline under the wave marks the long-session mode.
-        black.set()
-        w = px * 0.60
-        _rounded(NSMakeRect(cx - w / 2, cy - px * 0.40, w, px * 0.075),
-                 px * 0.04).fill()
     return _write(rep, os.path.join(MENUBAR, f"{state}.png"))
 
 
 def main():
     print("Dock icon:", build_icns())
-    for state in ("idle", "recording", "processing", "session"):
+    for state in ("idle", "recording", "processing"):
         print("menu bar:", menubar_glyph(state))
     return 0
 

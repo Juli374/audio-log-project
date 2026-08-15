@@ -488,10 +488,6 @@ body {
     background: var(--accent-hover);
 }
 
-/* Page visibility */
-.page { display: none; }
-.page.active { display: block; }
-
 /* History page */
 .history-page { display: block; }
 .history-page.hidden { display: none; }
@@ -536,30 +532,11 @@ body {
 <div class="settings-page" id="settingsPage">
     <div class="setting-group">
         <div class="setting-label">Режим транскрипции</div>
-        <div class="setting-description">Локальная модель работает офлайн, API требует интернет и ключ</div>
+        <div class="setting-description">Оба режима — облачные: нужен интернет и ключ API</div>
         <select class="setting-select" id="settingTranscriptionMode" onchange="app.onTranscriptionModeChange()">
-            <option value="local">Локальная модель (Whisper)</option>
-            <option value="api">OpenAI API</option>
             <option value="groq">Groq API (быстрый)</option>
+            <option value="api">OpenAI API</option>
         </select>
-    </div>
-
-    <!-- Local model settings -->
-    <div id="localSettings">
-        <div class="setting-group">
-            <div class="setting-label">Модель Whisper</div>
-            <div class="setting-description">Больше модель = точнее, но медленнее</div>
-            <select class="setting-select" id="settingModel">
-                <option value="tiny">tiny (~75 MB, быстрая)</option>
-                <option value="small">small (~500 MB, рекомендуемая)</option>
-                <option value="medium">medium (~1.5 GB, точная)</option>
-            </select>
-        </div>
-        <div class="setting-group">
-            <div class="setting-label">Количество потоков</div>
-            <div class="setting-description">Потоки CPU для транскрипции (1–8)</div>
-            <input class="setting-input" type="number" id="settingThreads" min="1" max="8" value="4">
-        </div>
     </div>
 
     <!-- API settings -->
@@ -621,7 +598,7 @@ body {
     </div>
     <div class="setting-group">
         <div class="setting-label">Корректировка через Claude</div>
-        <div class="setting-description">Только короткая диктовка. Лёгкая — пунктуация и явные ошибки, слова не трогает. Полная — заменяет неподходящие слова и чинит грамматику для итогового корректного текста. Длинные сессии не задеваются.</div>
+        <div class="setting-description">Лёгкая — пунктуация и явные ошибки, слова не трогает. Полная — заменяет неподходящие слова и чинит грамматику для итогового корректного текста.</div>
         <select class="setting-select" id="settingCleanupMode">
             <option value="off">Выключено</option>
             <option value="light">Лёгкая — только пунктуация и явные ошибки</option>
@@ -654,36 +631,20 @@ body {
             <option value="58">Left ⌥ (Option)</option>
             <option value="54">Right ⌘ (Command)</option>
             <option value="55">Left ⌘ (Command)</option>
-            <option value="62">Right ⌃ (Control)</option>
             <option value="59">Left ⌃ (Control)</option>
             <option value="60">Right ⇧ (Shift)</option>
             <option value="56">Left ⇧ (Shift)</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Клавиша сессии (длинная запись)</div>
-        <div class="setting-description">Двойной тап выбранной клавиши запускает/останавливает сессию. Должна отличаться от клавиши записи</div>
-        <select class="setting-select" id="settingSessionHotkeyKeycode">
-            <option value="58">Left ⌥ (Option)</option>
-            <option value="61">Right ⌥ (Option)</option>
-            <option value="55">Left ⌘ (Command)</option>
-            <option value="54">Right ⌘ (Command)</option>
-            <option value="59">Left ⌃ (Control)</option>
-            <option value="62">Right ⌃ (Control)</option>
-            <option value="56">Left ⇧ (Shift)</option>
-            <option value="60">Right ⇧ (Shift)</option>
         </select>
     </div>
     <div class="setting-group">
         <div class="setting-label">Клавиша перевода</div>
-        <div class="setting-description">Выдели текст в любом приложении и дважды нажми эту клавишу — перевод появится по центру экрана. Должна отличаться от клавиш записи и сессии</div>
+        <div class="setting-description">Выдели текст в любом приложении и дважды нажми эту клавишу — перевод появится по центру экрана. Должна отличаться от клавиши записи</div>
         <select class="setting-select" id="settingTranslateHotkeyKeycode">
-            <option value="62">Right ⌃ (Control)</option>
             <option value="59">Left ⌃ (Control)</option>
+            <option value="58">Left ⌥ (Option)</option>
             <option value="54">Right ⌘ (Command)</option>
             <option value="55">Left ⌘ (Command)</option>
             <option value="61">Right ⌥ (Option)</option>
-            <option value="58">Left ⌥ (Option)</option>
             <option value="60">Right ⇧ (Shift)</option>
             <option value="56">Left ⇧ (Shift)</option>
         </select>
@@ -813,6 +774,9 @@ const app = {
                 break;
             case 'settings_saved':
                 this.showToast('Настройки сохранены');
+                break;
+            case 'settings_error':
+                this.showToast(response.message || 'Не удалось сохранить настройки');
                 break;
             case 'test_api_result':
                 this.onTestApiResult(response);
@@ -965,16 +929,15 @@ const app = {
     // ─── Settings (unchanged) ───
 
     applySettings(s) {
-        document.getElementById('settingModel').value = s.model || 'small';
         document.getElementById('settingLanguage').value = s.language || 'ru';
-        document.getElementById('settingThreads').value = s.n_threads || 4;
         document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
         document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
-        document.getElementById('settingSessionHotkeyKeycode').value = String(s.session_hotkey_keycode ?? 58);
-        document.getElementById('settingTranslateHotkeyKeycode').value = String(s.translate_hotkey_keycode ?? 62);
+        document.getElementById('settingTranslateHotkeyKeycode').value = String(s.translate_hotkey_keycode ?? 59);
         document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
-        document.getElementById('settingTranscriptionMode').value = s.transcription_mode || 'local';
+        // Legacy settings.json may still hold "local" — that mode is gone.
+        const tmode = s.transcription_mode === 'api' ? 'api' : 'groq';
+        document.getElementById('settingTranscriptionMode').value = tmode;
         document.getElementById('settingApiKey').value = s.openai_api_key || '';
         document.getElementById('settingApiModel').value = s.openai_model || 'gpt-4o-mini-transcribe';
         document.getElementById('settingGroqKey').value = s.groq_api_key || '';
@@ -990,19 +953,15 @@ const app = {
 
     saveSettings() {
         const shortKc = parseInt(document.getElementById('settingHotkeyKeycode').value) || 61;
-        const longKc = parseInt(document.getElementById('settingSessionHotkeyKeycode').value) || 58;
-        const translateKc = parseInt(document.getElementById('settingTranslateHotkeyKeycode').value) || 62;
-        if (new Set([shortKc, longKc, translateKc]).size < 3) {
-            this.showToast('Клавиши записи, сессии и перевода должны отличаться');
+        const translateKc = parseInt(document.getElementById('settingTranslateHotkeyKeycode').value) || 59;
+        if (shortKc === translateKc) {
+            this.showToast('Клавиши записи и перевода должны отличаться');
             return;
         }
         const s = {
-            model: document.getElementById('settingModel').value,
             language: document.getElementById('settingLanguage').value,
-            n_threads: parseInt(document.getElementById('settingThreads').value) || 4,
             hotkey_mode: document.getElementById('settingHotkeyMode').value,
             hotkey_keycode: shortKc,
-            session_hotkey_keycode: longKc,
             translate_hotkey_keycode: translateKc,
             translate_target: document.getElementById('settingTranslateTarget').value,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
@@ -1069,7 +1028,6 @@ const app = {
 
     onTranscriptionModeChange() {
         const mode = document.getElementById('settingTranscriptionMode').value;
-        document.getElementById('localSettings').style.display = mode === 'local' ? '' : 'none';
         document.getElementById('apiSettings').style.display = mode === 'api' ? '' : 'none';
         document.getElementById('groqSettings').style.display = mode === 'groq' ? '' : 'none';
     },

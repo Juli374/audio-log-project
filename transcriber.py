@@ -1,12 +1,9 @@
-"""Whisper transcription — local (pywhispercpp) or OpenAI API."""
+"""Whisper transcription via cloud API — Groq or OpenAI."""
 
-import ctypes
-import ctypes.util
 import io
 import json
 import re
 import struct
-import threading
 import time
 import urllib.error
 import urllib.request
@@ -77,29 +74,6 @@ def _is_hallucination(text: str) -> bool:
     return total_matched / len(text) >= _HALLUCINATION_COVERAGE
 
 
-def _mlockall() -> bool:
-    """Lock all current process memory into RAM (prevent macOS swap).
-
-    Returns True if successful, False otherwise (non-fatal).
-    macOS may not implement mlockall (errno 78 = ENOSYS).
-    """
-    MCL_CURRENT = 1  # Lock all currently mapped pages
-
-    libc_name = ctypes.util.find_library("c")
-    if not libc_name:
-        log.warning("mlockall: libc not found — skipping")
-        return False
-
-    libc = ctypes.CDLL(libc_name, use_errno=True)
-    result = libc.mlockall(MCL_CURRENT)
-    if result != 0:
-        errno = ctypes.get_errno()
-        log.warning("mlockall failed (errno=%d) — will use heartbeat to keep model hot", errno)
-        return False
-
-    log.info("mlockall(MCL_CURRENT) succeeded — model memory pinned in RAM")
-    return True
-
 _TRANSCRIPTION_TIMEOUT = 30  # seconds
 
 
@@ -123,10 +97,9 @@ class BaseTranscriber:
         Instead we always transcribe in source language, then post-translate
         via Claude if config.target_language is set and differs from source.
 
-        If config.cleanup_enabled and apply_cleanup are both True, the raw
+        If config.cleanup_mode is enabled and apply_cleanup is True, the raw
         transcript is first sent to Claude for punctuation/capitalization
-        cleanup (strict prompt — does not change content). LongTranscriber
-        passes apply_cleanup=False to bypass cleanup for session chunks.
+        cleanup (strict prompt — does not change content).
         """
         text = self._transcribe_raw(audio)
         if _is_hallucination(text):
@@ -161,151 +134,6 @@ class BaseTranscriber:
             return text
         log.info("Translated → %s: %.80s…", target, translated)
         return translated
-
-
-_HEARTBEAT_INTERVAL_SEC = 30 * 60  # 30 minutes
-
-
-class LocalTranscriber(BaseTranscriber):
-    def __init__(self, config: Config) -> None:
-        super().__init__(config)
-        self._model = None
-        self._heartbeat_stop = threading.Event()
-        self._busy = threading.Lock()  # held during real transcriptions
-
-    def load_model(self) -> None:
-        from pywhispercpp.model import Model
-        log.info("Loading whisper model '%s' from %s …",
-                 self._config.model_name, self._config.model_path)
-        self._model = Model(
-            self._config.model_path,
-            n_threads=self._config.n_threads,
-        )
-        log.info("Model loaded successfully")
-
-        # Warmup: transcribe 0.1s of silence to fault all model pages into RAM
-        self._warmup()
-
-        # Try to pin memory in RAM (works on Linux, may fail on macOS)
-        locked = _mlockall()
-
-        # If mlockall failed, start background heartbeat to keep model pages hot.
-        # Every 30 min, a silent transcription touches all model memory pages,
-        # preventing macOS from swapping them to disk.
-        if not locked:
-            self._start_heartbeat()
-
-    def _warmup(self) -> None:
-        """Run a tiny silent transcription to fault all model pages into RAM."""
-        log.info("Warming up model (faulting all memory pages)…")
-        try:
-            silence = np.zeros(int(self._config.sample_rate * 0.1),
-                               dtype=np.float32)
-            self._model.transcribe(silence, language=self._config.language)
-            log.info("Warmup complete")
-        except Exception:
-            log.warning("Warmup transcription failed (non-fatal)", exc_info=True)
-
-    def _start_heartbeat(self) -> None:
-        """Background thread: periodically run a silent transcription to keep
-        model memory pages hot and prevent macOS from swapping them."""
-        log.info("Starting model heartbeat (every %d min)",
-                 _HEARTBEAT_INTERVAL_SEC // 60)
-
-        def _heartbeat_loop():
-            while not self._heartbeat_stop.wait(timeout=_HEARTBEAT_INTERVAL_SEC):
-                # Only run if no real transcription is in progress
-                if self._busy.acquire(blocking=False):
-                    try:
-                        log.debug("Heartbeat: touching model memory pages…")
-                        silence = np.zeros(
-                            int(self._config.sample_rate * 0.1),
-                            dtype=np.float32,
-                        )
-                        self._model.transcribe(
-                            silence, language=self._config.language,
-                        )
-                        log.debug("Heartbeat complete")
-                    except Exception:
-                        log.warning("Heartbeat failed (non-fatal)",
-                                    exc_info=True)
-                    finally:
-                        self._busy.release()
-                else:
-                    log.debug("Heartbeat skipped — transcription in progress")
-
-        t = threading.Thread(target=_heartbeat_loop, daemon=True,
-                             name="whisper-heartbeat")
-        t.start()
-
-    def _transcribe_raw(self, audio: np.ndarray) -> str:
-        if self._model is None:
-            raise RuntimeError("Model not loaded. Call load_model() first.")
-
-        if len(audio) == 0:
-            return ""
-
-        duration = len(audio) / self._config.sample_rate
-        if duration < self._config.min_duration:
-            log.warning("Audio too short (%.2fs < %.2fs), skipping",
-                        duration, self._config.min_duration)
-            return ""
-
-        # Acquire _busy to block heartbeat during real transcription
-        self._busy.acquire()
-        try:
-            return self._do_transcribe(audio, duration)
-        finally:
-            self._busy.release()
-
-    def _do_transcribe(self, audio: np.ndarray, duration: float) -> str:
-        # Run transcription with timeout to prevent infinite hangs
-        result = [None]
-        error = [None]
-
-        def _run():
-            try:
-                # no_context=True (= whisper.cpp `-mc 0`, OpenAI Whisper
-                # condition_on_previous_text=False). Prevents hallucinations
-                # from snowballing between internal segments and reduces
-                # false outputs on short utterances.
-                # See https://github.com/ggml-org/whisper.cpp/discussions/1490
-                segments = self._model.transcribe(
-                    audio,
-                    language=self._config.language,
-                    no_context=True,
-                )
-                result[0] = " ".join(
-                    seg.text.strip() for seg in segments if seg.text.strip()
-                )
-            except Exception as e:
-                error[0] = e
-
-        t0 = time.monotonic()
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(timeout=_TRANSCRIPTION_TIMEOUT)
-
-        elapsed = time.monotonic() - t0
-
-        if t.is_alive():
-            log.warning("Transcription timed out after %ds — skipping",
-                        _TRANSCRIPTION_TIMEOUT)
-            return ""
-
-        if error[0] is not None:
-            raise error[0]
-
-        text = result[0] or ""
-
-        # Log inference speed for diagnostics
-        ratio = elapsed / duration if duration > 0 else 0
-        log.info("Inference: %.2fs for %.1fs audio (ratio=%.2f) %s",
-                 elapsed, duration, ratio,
-                 "SLOW" if ratio > 1.0 else "OK")
-
-        log.info("Transcribed: %.80s…", text)
-        return text
 
 
 class APITranscriber(BaseTranscriber):
@@ -426,12 +254,14 @@ class GroqTranscriber(BaseTranscriber):
 
 
 def create_transcriber(config: Config) -> BaseTranscriber:
-    """Factory: create appropriate transcriber based on config."""
-    if config.transcription_mode == "groq":
-        return GroqTranscriber(config)
+    """Factory: create appropriate transcriber based on config.
+
+    Unknown modes fall back to Groq — the default and only other option
+    is OpenAI, so there is nothing sensible to fail into.
+    """
     if config.transcription_mode == "api":
         return APITranscriber(config)
-    return LocalTranscriber(config)
+    return GroqTranscriber(config)
 
 
 def test_api_connection(api_key: str, model: str) -> dict:

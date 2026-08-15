@@ -88,14 +88,11 @@ _ESC_POLL_INTERVAL = 0.1
 # held key repeats or bouncing contacts)
 _TOGGLE_DEBOUNCE = 0.3
 
-# Long-session key: window for detecting a double-tap of Left Option.
-# Two presses within this window = fire toggle. Guards against false
-# triggers when user types Option+arrow/delete etc. (any single press
-# during typing won't match the double-tap pattern).
-_LONG_DOUBLE_TAP_WINDOW = 0.5
-
-# Minimum gap between long-session fires (protects against key repeat)
-_LONG_DEBOUNCE = 0.2
+# Window for detecting a double-tap of a bare modifier key. Two presses
+# within this window = fire. Guards against false triggers when the user
+# types ⌘C / Option+arrow etc. (any single press during typing won't
+# match the double-tap pattern).
+_DOUBLE_TAP_WINDOW = 0.5
 
 
 class HotkeyListener:
@@ -114,22 +111,17 @@ class HotkeyListener:
     """
 
     def __init__(self, config, on_activate, on_deactivate, on_cancel=None,
-                 on_long_toggle=None, on_translate_toggle=None):
+                 on_translate_toggle=None):
         self._config = config
         self._on_activate = on_activate
         self._on_deactivate = on_deactivate
         self._on_cancel = on_cancel
-        self._on_long_toggle = on_long_toggle
         self._on_translate_toggle = on_translate_toggle
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
-        self._long_keycode = getattr(config, "session_hotkey_keycode", None)
-        self._long_require_double_tap = getattr(
-            config, "session_hotkey_require_double_tap", True)
         self._translate_keycode = getattr(config, "translate_hotkey_keycode", None)
         self._pressed = False
         self._recording = False  # for toggle mode
         self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
-        self._last_long_tap = 0.0    # for double-tap detection on long key
         self._last_translate_tap = 0.0  # double-tap detection on translate key
         self._global_monitor = None
         self._local_monitor = None
@@ -207,10 +199,6 @@ class HotkeyListener:
                 self._handle_toggle(is_pressed)
             else:
                 self._handle_hold(is_pressed)
-        elif (self._long_keycode is not None and kc == self._long_keycode
-              and self._on_long_toggle is not None):
-            is_pressed = bool(flags & flag_for_keycode(self._long_keycode))
-            self._handle_long(is_pressed)
         elif (self._translate_keycode is not None
               and kc == self._translate_keycode
               and self._on_translate_toggle is not None):
@@ -228,7 +216,7 @@ class HotkeyListener:
             return
 
         now = time.monotonic()
-        if now - self._last_translate_tap < _LONG_DOUBLE_TAP_WINDOW:
+        if now - self._last_translate_tap < _DOUBLE_TAP_WINDOW:
             log.info("Translate hotkey: double-tap detected")
             self._last_translate_tap = 0.0
             try:
@@ -237,42 +225,6 @@ class HotkeyListener:
                 log.exception("Error in on_translate_toggle")
         else:
             self._last_translate_tap = now
-
-    def _handle_long(self, is_pressed):
-        """Left Option handler for long-session toggle.
-
-        Default is double-tap: two presses within 0.5s fire the toggle.
-        Normal typing (Option+arrow, Option+delete, etc.) produces single
-        presses and won't match the pattern. Set
-        `session_hotkey_require_double_tap=False` for single-press mode.
-        """
-        if not is_pressed:
-            return  # only fire on press, not release
-
-        now = time.monotonic()
-
-        if not self._long_require_double_tap:
-            if now - self._last_long_tap < _LONG_DEBOUNCE:
-                return
-            self._last_long_tap = now
-            log.info("Long session hotkey: single-press toggle")
-            try:
-                AppHelper.callAfter(self._on_long_toggle)
-            except Exception:
-                log.exception("Error in on_long_toggle")
-            return
-
-        # Double-tap mode
-        if now - self._last_long_tap < _LONG_DOUBLE_TAP_WINDOW:
-            log.info("Long session hotkey: double-tap detected")
-            self._last_long_tap = 0.0  # reset so 3rd tap doesn't re-fire
-            try:
-                AppHelper.callAfter(self._on_long_toggle)
-            except Exception:
-                log.exception("Error in on_long_toggle")
-        else:
-            # First tap — wait for second
-            self._last_long_tap = now
 
     def _handle_hold(self, is_pressed):
         """Hold mode: hold key to record, release to stop."""
@@ -384,14 +336,6 @@ class HotkeyListener:
         self._last_toggle_time = 0.0
         self._cancel_polling()
         self._stop_esc_polling()
-
-    def set_long_keycode(self, keycode: int) -> None:
-        """Live-update the long-session hotkey."""
-        if keycode == self._long_keycode:
-            return
-        log.info("Long hotkey: keycode %s → %d", self._long_keycode, keycode)
-        self._long_keycode = keycode
-        self._last_long_tap = 0.0
 
     def set_translate_keycode(self, keycode: int) -> None:
         """Live-update the translate hotkey."""

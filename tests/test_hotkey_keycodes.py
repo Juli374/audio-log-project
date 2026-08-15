@@ -7,7 +7,7 @@ by the menubar picker. Pure logic — no NSEvent monitor lifecycle.
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -105,7 +105,6 @@ class LiveSetterTests(unittest.TestCase):
             config=config,
             on_activate=lambda: None,
             on_deactivate=lambda: None,
-            on_long_toggle=lambda: None,
         )
 
     def test_set_keycode_updates_short_hotkey(self):
@@ -128,10 +127,10 @@ class LiveSetterTests(unittest.TestCase):
         hk.set_keycode(hk._keycode)
         self.assertTrue(hk._pressed)
 
-    def test_set_long_keycode_updates_session_hotkey(self):
+    def test_set_translate_keycode_updates_translate_hotkey(self):
         hk = self._make_hotkey()
-        hk.set_long_keycode(55)  # Left Command
-        self.assertEqual(hk._long_keycode, 55)
+        hk.set_translate_keycode(55)  # Left Command
+        self.assertEqual(hk._translate_keycode, 55)
 
     def test_after_set_keycode_new_event_dispatches(self):
         from hotkey import _FLAG_COMMAND

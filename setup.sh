@@ -24,9 +24,8 @@ echo ""
 echo "Transcription mode:"
 echo "  1) Groq — Groq API (whisper-large-v3-turbo, fastest, needs gsk_... key)"
 echo "  2) OpenAI — OpenAI API (gpt-4o-transcribe, needs sk-... key)"
-echo "  3) Local — Whisper model (~500 MB download, works offline)"
 echo ""
-read -rp "Choose [1/2/3, default=1]: " MODE_CHOICE
+read -rp "Choose [1/2, default=1]: " MODE_CHOICE
 MODE_CHOICE="${MODE_CHOICE:-1}"
 
 # 1. Create venv
@@ -41,24 +40,7 @@ echo "Installing dependencies…"
 pip install --upgrade pip -q
 pip install -r requirements.txt -q
 
-# 3. Download model (only for local mode)
-if [ "$MODE_CHOICE" = "3" ]; then
-    MODEL_NAME="small"
-    MODEL_DIR="$SCRIPT_DIR/models"
-    MODEL_FILE="$MODEL_DIR/ggml-${MODEL_NAME}.bin"
-    MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${MODEL_NAME}.bin"
-    mkdir -p "$MODEL_DIR"
-    if [ ! -f "$MODEL_FILE" ]; then
-        echo "Downloading whisper model '${MODEL_NAME}' (~500 MB)…"
-        curl -L -o "$MODEL_FILE" "$MODEL_URL"
-    else
-        echo "Model already downloaded: $MODEL_FILE"
-    fi
-else
-    echo "API mode selected — skipping model download"
-fi
-
-# 3b. Create initial settings
+# 3. Create initial settings
 DATA_DIR="$HOME/Library/Application Support/audio-log"
 SETTINGS_FILE="$DATA_DIR/settings.json"
 mkdir -p "$DATA_DIR"
@@ -86,14 +68,6 @@ elif [ "$MODE_CHOICE" = "2" ] && [ ! -f "$SETTINGS_FILE" ]; then
 }
 SETTINGS
     echo "Settings saved to $SETTINGS_FILE"
-elif [ "$MODE_CHOICE" = "3" ] && [ ! -f "$SETTINGS_FILE" ]; then
-    cat > "$SETTINGS_FILE" <<SETTINGS
-{
-  "transcription_mode": "local",
-  "language": "ru",
-  "hotkey_mode": "toggle"
-}
-SETTINGS
 fi
 
 # 4. Build PasteHelper.app (text injection helper)
@@ -127,15 +101,12 @@ fi
 echo ""
 echo "=== Setup complete ==="
 echo ""
-if [ "$MODE_CHOICE" = "1" ]; then
-    echo "Mode: Groq (whisper-large-v3-turbo). No local model."
-    echo "API key can be changed in: $SETTINGS_FILE"
-elif [ "$MODE_CHOICE" = "2" ]; then
-    echo "Mode: OpenAI API (gpt-4o-transcribe). No local model."
-    echo "API key can be changed in: $SETTINGS_FILE"
+if [ "$MODE_CHOICE" = "2" ]; then
+    echo "Mode: OpenAI API (gpt-4o-transcribe)."
 else
-    echo "Mode: Local (Whisper). Model: models/ggml-small.bin"
+    echo "Mode: Groq (whisper-large-v3-turbo)."
 fi
+echo "API key can be changed in: $SETTINGS_FILE"
 echo ""
 echo "Next step:  bash install.sh"
 echo ""

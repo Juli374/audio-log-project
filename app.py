@@ -86,9 +86,8 @@ class App:
     def run(self) -> None:
         log.info("Starting audio-log-project (headless)…")
 
-        self._config.ensure_model_dir()
         self._transcriber.load_model()
-        log.info("Model loaded. Listening for hotkey…")
+        log.info("Transcriber ready. Listening for hotkey…")
 
         self._hotkey.start()
 

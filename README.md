@@ -8,14 +8,14 @@
 
 Фоновое приложение для macOS. Работает в любом приложении: браузер, мессенджер, IDE, заметки. Живёт в menu bar, запускается при логине.
 
-Два режима транскрипции:
-- **API** (рекомендуется) — OpenAI API, без локальной модели, 0 MB RAM, быстро, нужен интернет + API ключ
-- **Local** — Whisper small через whisper.cpp, полностью оффлайн, ~500 MB на диск + RAM
+Два режима транскрипции — оба облачные, локальной модели нет:
+- **Groq** (по умолчанию) — whisper-large-v3-turbo на Groq LPU, самый быстрый, нужен `gsk_...` ключ
+- **OpenAI API** — gpt-4o-transcribe, нужен `sk-...` ключ
 
 Возможности:
 - Русский и английский (переключение в меню)
+- Мгновенный перевод выделенного текста (двойной тап Right ⌃)
 - История транскрипций с поиском
-- Заметки
 - Автовставка текста в активное поле (Accessibility API, fallback на Cmd+V)
 - Hold или toggle режим хоткея
 
@@ -49,20 +49,18 @@ bash setup.sh
 Скрипт спросит режим:
 ```
 Transcription mode:
-  1) API — OpenAI API (no local model, needs API key, fast)
-  2) Local — Whisper model (~500 MB download, works offline)
+  1) Groq — Groq API (whisper-large-v3-turbo, fastest, needs gsk_... key)
+  2) OpenAI — OpenAI API (gpt-4o-transcribe, needs sk-... key)
 
 Choose [1/2, default=1]:
 ```
 
-- Выбор **1** (API): попросит ввести OpenAI API ключ (`sk-...`), модель не качается
-- Выбор **2** (Local): скачает модель Whisper small (~500 MB)
+Оба варианта спросят API-ключ и запишут его в `settings.json`.
 
 Что делает `setup.sh`:
 - Находит Python 3.10+ автоматически
 - Создаёт виртуальное окружение (.venv)
 - Ставит зависимости (requirements.txt)
-- Скачивает модель (только для Local)
 - Создаёт settings.json с выбранным режимом
 - Компилирует PasteHelper.app из Swift-исходника (для автовставки текста)
 
@@ -135,14 +133,16 @@ python run.py --no-menubar  # только терминал
 }
 ```
 
-Или для локального режима:
+Или для Groq:
 ```json
 {
-  "transcription_mode": "local"
+  "transcription_mode": "groq",
+  "groq_api_key": "gsk_...",
+  "groq_model": "whisper-large-v3-turbo"
 }
 ```
 
-После изменения — перезапустить: `bash install.sh`
+Проще — вкладка «Настройки» в окне истории: режим применяется сразу, без перезапуска.
 
 ## Обновления
 
@@ -195,17 +195,18 @@ bash release.sh 1.3.1
 | `app.py` | Headless-режим (--no-menubar) |
 | `config.py` | Настройки (dataclass + JSON) |
 | `recorder.py` | Запись аудио (sounddevice) |
-| `transcriber.py` | Транскрипция: local (whisper.cpp) или API (OpenAI) |
+| `transcriber.py` | Транскрипция через API (Groq / OpenAI) + Claude-чистка и перевод |
+| `translate_popup.py` | Мгновенный перевод выделенного текста поверх окон |
 | `hotkey.py` | Глобальный хоткей (NSEvent), hold/toggle |
 | `output.py` | Clipboard + PasteHelper (автовставка) |
 | `PasteHelper.swift` | Нативный helper: Accessibility API → Cmd+V fallback |
 | `overlay.py` | Плавающий статус поверх всех окон |
 | `history_ui.py` | Окно истории (WKWebView) |
-| `db.py` | SQLite: история, заметки |
-| `ui/index.html` | Фронтенд истории |
+| `db.py` | SQLite: история транскрипций |
+| `ui/index.html` | Фронтенд истории и настроек |
 | `version.py` | Версия приложения (из VERSION / Info.plist) |
 | `updater.py` | Авто-обновление: фид, проверки, подмена бандла |
-| `setup.sh` | Установка: venv + зависимости + модель + PasteHelper |
+| `setup.sh` | Установка: venv + зависимости + PasteHelper |
 | `build.sh` | Сборка py2app + подпись Developer ID + нотаризация |
 | `install.sh` | Установка в /Applications + LaunchAgent |
 | `release.sh` | Выпуск версии: сборка, нотаризация, GitHub Release |
