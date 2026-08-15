@@ -73,9 +73,17 @@ _PADDING = 22
 _CORNER_RADIUS = 14
 _FONT_SIZE = 15.0
 
-# Clipboard round-trip: how long we wait for the frontmost app to answer ⌘C
+# Clipboard round-trip: how long we wait for the frontmost app to answer ⌘C.
+# Apps differ wildly — a native text field answers in ~20ms, Google Docs
+# builds the clipboard in JavaScript and can take most of a second on a
+# large selection. The old 0.45s gave up on those and reported an empty
+# selection over text that was plainly highlighted.
 _COPY_POLL_INTERVAL = 0.02
-_COPY_TIMEOUT = 0.45
+_COPY_TIMEOUT = 1.6
+
+# If nothing has landed by this point the keystroke probably never reached
+# the app (focus was still settling), so send it once more.
+_COPY_RETRY_AFTER = 0.5
 
 # The shortcut is pressed with modifiers still physically held (⌥D fires
 # while ⌥ is down). A synthesized ⌘C would then reach the app as ⌥⌘C and
@@ -119,23 +127,25 @@ def _post_cmd_c() -> None:
     CGEventPost(kCGHIDEventTap, up)
 
 
-def _wait_for_modifier_release() -> None:
-    """Block until no modifier is physically held (or we give up).
+def _wait_for_modifier_release() -> float:
+    """Block until no modifier is physically held. Returns seconds waited.
 
     Without this the synthesized ⌘C inherits whatever the user is still
     holding — ⌥D fires while ⌥ is down, the app receives ⌥⌘C, and nothing
     is copied. Everything downstream then looks like an empty selection.
     """
-    deadline = time.monotonic() + _MODIFIER_RELEASE_TIMEOUT
+    start = time.monotonic()
+    deadline = start + _MODIFIER_RELEASE_TIMEOUT
     while time.monotonic() < deadline:
         flags = CGEventSourceFlagsState(kCGEventSourceStateHIDSystemState)
         if not (flags & _MODIFIERS_HELD_MASK):
             # Small settle so the key-up has propagated to the focused app.
-            time.sleep(0.03)
-            return
+            time.sleep(0.05)
+            return time.monotonic() - start
         time.sleep(_MODIFIER_POLL_INTERVAL)
     log.warning("Modifiers still held after %.1fs — copying anyway",
                 _MODIFIER_RELEASE_TIMEOUT)
+    return time.monotonic() - start
 
 
 def grab_selected_text() -> str:
@@ -146,7 +156,7 @@ def grab_selected_text() -> str:
     instead of sleeping a fixed amount: apps answer ⌘C at wildly different
     speeds, and a stale read would translate the previous clipboard.
     """
-    _wait_for_modifier_release()
+    waited = _wait_for_modifier_release()
 
     pb = NSPasteboard.generalPasteboard()
     previous = pb.stringForType_(NSPasteboardTypeString)
@@ -154,13 +164,19 @@ def grab_selected_text() -> str:
 
     _post_cmd_c()
 
-    deadline = time.monotonic() + _COPY_TIMEOUT
+    start = time.monotonic()
+    deadline = start + _COPY_TIMEOUT
+    retried = False
     text = ""
     while time.monotonic() < deadline:
         time.sleep(_COPY_POLL_INTERVAL)
         if pb.changeCount() != before:
             text = pb.stringForType_(NSPasteboardTypeString) or ""
             break
+        if not retried and time.monotonic() - start >= _COPY_RETRY_AFTER:
+            retried = True
+            log.info("Copy did not land in %.2fs — retrying", _COPY_RETRY_AFTER)
+            _post_cmd_c()
 
     if text and previous is not None:
         # Restore on a delay: some apps write to the pasteboard slightly
@@ -174,7 +190,9 @@ def grab_selected_text() -> str:
         threading.Thread(target=_restore, daemon=True).start()
 
     text = (text or "").strip()
-    log.info("Selection captured: %d chars", len(text))
+    log.info("Selection captured: %d chars (modifier wait %.2fs, "
+             "copy %.2fs%s)", len(text), waited, time.monotonic() - start,
+             ", retried" if retried else "")
     return text
 
 
@@ -486,12 +504,6 @@ class TranslatePopup:
         self._panel.orderFrontRegardless()
         self._install_dismiss_monitors()
 
-    def update(self, text: str) -> None:
-        """Replace the panel's text in place (placeholder → result)."""
-        if self._panel is None or not self._panel.isVisible():
-            return self.show(text)
-        self.show(text)
-
     def hide(self) -> None:
         self._remove_dismiss_monitors()
         if self._panel is not None:
@@ -594,33 +606,41 @@ class TranslateController:
         # so it cannot run on the main thread — that would freeze the UI of
         # every app while we hold it.
         self._busy = True
-        self._popup.show(_PLACEHOLDER)
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self) -> None:
         try:
+            # Grab the selection BEFORE showing the panel. Ordering the
+            # panel in first can take key focus away from the document, and
+            # then the synthesized ⌘C copies from our own window instead —
+            # which showed up as an empty selection every other press.
             text = grab_selected_text()
             if not text:
                 self._show_async(
                     "Ничего не выделено.\n\nВыдели текст мышью и нажми "
-                    "сочетание перевода ещё раз."
-                )
+                    "сочетание перевода ещё раз.", force=True)
                 return
 
+            self._show_async(_PLACEHOLDER, force=True)
             target = getattr(self._config, "translate_target", "ru") or "ru"
             self._show_async(translate_text(
                 text, target, self._config, on_partial=self._show_async))
         except Exception as e:
             log.exception("Translate failed")
-            self._show_async(f"Перевод не удался: {e}")
+            self._show_async(f"Перевод не удался: {e}", force=True)
         finally:
             self._busy = False
 
-    def _show_async(self, text: str) -> None:
+    def _show_async(self, text: str, force: bool = False) -> None:
+        """Push text to the panel from a worker thread.
+
+        Without `force` an update is dropped when the panel is not on
+        screen — that is how a translation the user already dismissed stops
+        reappearing mid-stream.
+        """
         def _apply():
-            # Ignore a result the user already dismissed.
-            if self._popup.is_visible():
-                self._popup.update(text)
+            if force or self._popup.is_visible():
+                self._popup.show(text)
 
         AppHelper.callAfter(_apply)
 
