@@ -668,6 +668,14 @@ body {
                 onclick="app.recordShortcut()">⌥D</button>
     </div>
     <div class="setting-group">
+        <div class="setting-label">Качество перевода</div>
+        <div class="setting-description">Sonnet точнее на рабочих текстах — правильно берёт термины и учитывает контекст фразы. Haiku примерно в полтора раза быстрее, но иногда путает термины</div>
+        <select class="setting-select" id="settingTranslateModel">
+            <option value="claude-sonnet-5">Точный (Sonnet)</option>
+            <option value="claude-haiku-4-5-20251001">Быстрый (Haiku)</option>
+        </select>
+    </div>
+    <div class="setting-group">
         <div class="setting-label">Язык перевода</div>
         <div class="setting-description">На какой язык переводить выделенный текст</div>
         <select class="setting-select" id="settingTranslateTarget">
@@ -1042,6 +1050,7 @@ const app = {
         this.translateMods = (s.translate_hotkey_mods ?? 524288);
         this.renderShortcut();
         document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
+        document.getElementById('settingTranslateModel').value = s.translate_model || 'claude-sonnet-5';
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
         // Legacy settings.json may still hold "local" — that mode is gone.
         const tmode = s.transcription_mode === 'api' ? 'api' : 'groq';
@@ -1068,6 +1077,7 @@ const app = {
             translate_hotkey_key: this.translateKey,
             translate_hotkey_mods: this.translateMods,
             translate_target: document.getElementById('settingTranslateTarget').value,
+            translate_model: document.getElementById('settingTranslateModel').value,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
             transcription_mode: document.getElementById('settingTranscriptionMode').value,
             openai_api_key: document.getElementById('settingApiKey').value,

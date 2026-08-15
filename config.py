@@ -77,6 +77,10 @@ class Config:
     translate_enabled: bool = True
     translate_hotkey_key: int = 2               # D
     translate_hotkey_mods: int = 1 << 19        # Option
+    # Sonnet by default — on technical text Haiku gets domain terms wrong
+    # ("campaign-level" → "ad-group level"). Streaming hides the extra
+    # second and a half. "claude-haiku-4-5-20251001" is the fast option.
+    translate_model: str = "claude-sonnet-5"
     translate_target: str = "ru"                # language to translate into
 
     # ── Auto-update ──
@@ -129,6 +133,7 @@ class Config:
             "translate_enabled": self.translate_enabled,
             "translate_hotkey_key": self.translate_hotkey_key,
             "translate_hotkey_mods": self.translate_hotkey_mods,
+            "translate_model": self.translate_model,
             "translate_target": self.translate_target,
             "auto_update": self.auto_update,
             "auto_update_silent": self.auto_update_silent,
@@ -176,6 +181,8 @@ class Config:
             self.translate_hotkey_key = int(settings["translate_hotkey_key"])
         if "translate_hotkey_mods" in settings:
             self.translate_hotkey_mods = int(settings["translate_hotkey_mods"])
+        if "translate_model" in settings:
+            self.translate_model = str(settings["translate_model"])
         if "translate_target" in settings:
             self.translate_target = str(settings["translate_target"])
         if "auto_update" in settings:

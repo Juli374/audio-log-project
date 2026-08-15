@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from AppKit import (
     NSBackingStoreBuffered,
@@ -92,6 +93,14 @@ _CHUNK_CHARS = 6000
 # Per-call ceiling. Longer than the dictation path's 15s: a full page of
 # prose legitimately takes longer than a spoken sentence.
 _API_TIMEOUT = 90
+
+# Sonnet over Haiku by default: on real work text Haiku mistranslated
+# "campaign-level negatives" as ad-group level, while Sonnet produced the
+# actual Google Ads term. ~1.5s slower, and streaming hides that anyway.
+_DEFAULT_MODEL = "claude-sonnet-5"
+
+# How often the panel is repainted while text streams in.
+_STREAM_REDRAW_INTERVAL = 0.12
 
 _PLACEHOLDER = "Перевожу…"
 
@@ -240,21 +249,23 @@ def _document_prompt(target: str) -> str:
     )
 
 
-def _translate_chunk(text: str, target: str, config) -> str:
-    """One Claude call for one chunk of document text."""
+def _build_request(text: str, target: str, config, stream: bool):
     api_key = config.anthropic_api_key
     if not api_key:
         raise RuntimeError("Не задан ключ Anthropic")
 
     payload = {
-        "model": getattr(config, "anthropic_model", "claude-haiku-4-5-20251001"),
+        "model": getattr(config, "translate_model", _DEFAULT_MODEL),
         # Generous ceiling: Russian runs longer than English, and a
         # truncated translation is worse than a slow one.
         "max_tokens": 8192,
         "system": _document_prompt(target),
         "messages": [{"role": "user", "content": text}],
     }
-    request = urllib.request.Request(
+    if stream:
+        payload["stream"] = True
+
+    return urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
         data=json.dumps(payload).encode("utf-8"),
         headers={
@@ -265,27 +276,93 @@ def _translate_chunk(text: str, target: str, config) -> str:
         method="POST",
     )
 
+
+def _http_error(e) -> RuntimeError:
+    detail = e.read().decode(errors="replace")[:200]
+    log.error("Claude API error %d: %s", e.code, detail)
+    return RuntimeError(f"Claude ответил ошибкой {e.code}")
+
+
+def _translate_chunk(text: str, target: str, config) -> str:
+    """One Claude call for one chunk of document text."""
     try:
-        with urllib.request.urlopen(request, timeout=_API_TIMEOUT) as response:
+        with urllib.request.urlopen(
+                _build_request(text, target, config, stream=False),
+                timeout=_API_TIMEOUT) as response:
             data = json.loads(response.read().decode())
     except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:200]
-        log.error("Claude API error %d: %s", e.code, detail)
-        raise RuntimeError(f"Claude ответил ошибкой {e.code}") from e
+        raise _http_error(e) from e
 
     blocks = data.get("content", [])
     return "".join(
         b.get("text", "") for b in blocks if b.get("type") == "text").strip()
 
 
-def translate_text(text: str, target: str, config) -> str:
-    """Translate `text` into `target` via Claude, chunking when long."""
+def _translate_streaming(text: str, target: str, config, on_text) -> str:
+    """Translate one chunk, calling `on_text(partial)` as it arrives.
+
+    Waiting for a whole page before showing anything is what made this feel
+    slow — the first words land in about a second, so show them.
+    """
+    try:
+        response = urllib.request.urlopen(
+            _build_request(text, target, config, stream=True),
+            timeout=_API_TIMEOUT)
+    except urllib.error.HTTPError as e:
+        raise _http_error(e) from e
+
+    parts: list[str] = []
+    last_push = 0.0
+    with response:
+        for raw in response:
+            line = raw.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            body = line[5:].strip()
+            if not body or body == "[DONE]":
+                continue
+            try:
+                event = json.loads(body)
+            except json.JSONDecodeError:
+                continue
+            if event.get("type") != "content_block_delta":
+                continue
+            piece = event.get("delta", {}).get("text", "")
+            if not piece:
+                continue
+            parts.append(piece)
+            # Repainting on every token would thrash the panel; a few
+            # updates a second reads as live without the flicker.
+            now = time.monotonic()
+            if now - last_push >= _STREAM_REDRAW_INTERVAL:
+                last_push = now
+                on_text("".join(parts))
+
+    return "".join(parts).strip()
+
+
+def translate_text(text: str, target: str, config, on_partial=None) -> str:
+    """Translate `text` into `target` via Claude.
+
+    A selection that fits one call is streamed, so text appears while it is
+    still being produced. Longer documents are split and the pieces run
+    concurrently — sequential chunks were the reason a long page took ages.
+    """
     parts = _split_for_translation(text)
-    if len(parts) > 1:
-        log.info("Translate: %d chars → %d chunks", len(text), len(parts))
     t0 = time.monotonic()
-    out = [_translate_chunk(part, target, config) for part in parts]
-    log.info("Translate: %d chars in %.1fs", len(text), time.monotonic() - t0)
+
+    if len(parts) == 1 and on_partial is not None:
+        out = _translate_streaming(text, target, config, on_partial)
+        log.info("Translate: %d chars in %.1fs (streamed)",
+                 len(text), time.monotonic() - t0)
+        return out
+
+    log.info("Translate: %d chars → %d chunks", len(text), len(parts))
+    with ThreadPoolExecutor(max_workers=min(4, len(parts))) as pool:
+        out = list(pool.map(
+            lambda p: _translate_chunk(p, target, config), parts))
+    log.info("Translate: %d chars in %.1fs (%d chunks)",
+             len(text), time.monotonic() - t0, len(parts))
     return "\n\n".join(out)
 
 
@@ -531,7 +608,8 @@ class TranslateController:
                 return
 
             target = getattr(self._config, "translate_target", "ru") or "ru"
-            self._show_async(translate_text(text, target, self._config))
+            self._show_async(translate_text(
+                text, target, self._config, on_partial=self._show_async))
         except Exception as e:
             log.exception("Translate failed")
             self._show_async(f"Перевод не удался: {e}")

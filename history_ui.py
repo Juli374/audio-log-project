@@ -291,6 +291,8 @@ class HistoryWindow:
                 "target_language": str(data.get("target_language", "")),
                 "translate_hotkey_key": translate_key,
                 "translate_hotkey_mods": translate_mods,
+                "translate_model": str(data.get(
+                    "translate_model", self._config.translate_model)),
                 "translate_target": str(data.get("translate_target", "ru")),
                 "auto_update": bool(data.get("auto_update", True)),
             }
