@@ -50,8 +50,24 @@ class HistoryWindow:
         self._transcriber = None
         self._long_transcriber = None  # set by MenuBarApp after SessionController is built
         self._hotkey_listener = None   # set by MenuBarApp after listener.start()
+        self._updater = None           # set by MenuBarApp after updater.start()
+        self._install_update_cb = None  # MenuBarApp quits the app, then swaps
+        self._rebuild_transcriber_cb = None  # MenuBarApp owns the transcriber
         self._voice_recording = False
         self._voice_target = None  # 'note' or 'task'
+
+    def _rebuild_transcriber(self) -> None:
+        """Swap in a transcriber for the newly-chosen mode."""
+        if self._rebuild_transcriber_cb is None:
+            log.warning("Transcription mode changed but no rebuild hook set — "
+                        "restart required for it to take effect")
+            return
+        try:
+            self._rebuild_transcriber_cb()
+            log.info("Transcriber rebuilt for mode %s",
+                     self._config.transcription_mode)
+        except Exception:
+            log.exception("Failed to rebuild transcriber")
 
     def build(self) -> None:
         """Create the window and webview. Must be called on main thread."""
@@ -236,8 +252,60 @@ class HistoryWindow:
             self._send_response({"action": "copied"})
 
         elif action == "get_settings":
+            from version import current as current_version
             settings = self._config.load_settings()
-            self._send_response({"action": "settings", "data": settings})
+            settings["auto_update"] = bool(
+                settings.get("auto_update", self._config.auto_update))
+            self._send_response({
+                "action": "settings",
+                "data": settings,
+                "version": current_version(),
+                "staged_version": (self._updater.staged_version
+                                   if self._updater else None),
+            })
+
+        elif action == "get_permissions":
+            from output import is_trusted
+            self._send_response({"action": "permissions",
+                                 "accessibility": is_trusted()})
+
+        elif action == "request_accessibility":
+            from output import (is_trusted, open_accessibility_settings,
+                                request_accessibility)
+            granted = request_accessibility(prompt=True)
+            if not granted:
+                open_accessibility_settings()
+            self._send_response({"action": "permissions",
+                                 "accessibility": is_trusted()})
+
+        elif action == "check_updates":
+            import threading
+            if self._updater is None:
+                self._send_response({
+                    "action": "update_status", "status": "error",
+                    "detail": "Обновления доступны только в установленном приложении"})
+                return
+
+            def _check():
+                status, detail = self._updater.check_now()
+
+                def _respond():
+                    self._send_response({"action": "update_status",
+                                         "status": status, "detail": detail})
+                AppHelper.callAfter(_respond)
+
+            threading.Thread(target=_check, daemon=True).start()
+
+        elif action == "install_update":
+            if self._updater is None or not self._updater.staged_version:
+                self._send_response({
+                    "action": "update_status", "status": "error",
+                    "detail": "Нечего устанавливать"})
+                return
+            if self._install_update_cb is not None:
+                self._install_update_cb()
+            else:
+                self._updater.apply_now()
 
         elif action == "save_settings":
             from hotkey import MODIFIER_KEY_FLAGS
@@ -253,11 +321,18 @@ class HistoryWindow:
                 short_kc = self._config.hotkey_keycode
             if long_kc not in MODIFIER_KEY_FLAGS:
                 long_kc = self._config.session_hotkey_keycode
-            if short_kc == long_kc:
+            translate_kc = int(data.get(
+                "translate_hotkey_keycode",
+                getattr(self._config, "translate_hotkey_keycode", 62)))
+            if translate_kc not in MODIFIER_KEY_FLAGS:
+                translate_kc = getattr(
+                    self._config, "translate_hotkey_keycode", 62)
+            if len({short_kc, long_kc, translate_kc}) < 3:
                 self._send_response({
                     "action": "settings_error",
                     "error": "hotkey_conflict",
-                    "message": "Клавиша записи и сессии должны отличаться"})
+                    "message": "Клавиши записи, сессии и перевода должны "
+                               "отличаться"})
                 return
 
             settings = {
@@ -276,15 +351,26 @@ class HistoryWindow:
                 "anthropic_api_key": str(data.get("anthropic_api_key", "")),
                 "cleanup_mode": str(data.get("cleanup_mode", "off")),
                 "target_language": str(data.get("target_language", "")),
+                "translate_hotkey_keycode": translate_kc,
+                "translate_target": str(data.get("translate_target", "ru")),
+                "auto_update": bool(data.get("auto_update", True)),
             }
+            previous_mode = self._config.transcription_mode
             self._config.save_settings(settings)
             # Live-apply hotkey changes — no restart needed.
             if self._hotkey_listener is not None:
                 try:
                     self._hotkey_listener.set_keycode(short_kc)
                     self._hotkey_listener.set_long_keycode(long_kc)
+                    self._hotkey_listener.set_translate_keycode(translate_kc)
                 except Exception:
                     log.exception("Failed to live-apply hotkey changes")
+            # The transcriber is picked once, at startup, from the mode in
+            # config. Switching Groq↔OpenAI↔local in the UI used to change
+            # nothing until a restart, so the app kept using the previous
+            # service and its key — exactly the "wrong key" symptom.
+            if self._config.transcription_mode != previous_mode:
+                self._rebuild_transcriber()
             self._send_response({"action": "settings_saved"})
 
         elif action == "test_api":
@@ -314,207 +400,3 @@ class HistoryWindow:
                 AppHelper.callAfter(_respond)
 
             threading.Thread(target=_test_groq, daemon=True).start()
-
-        # --- Заметки ---
-        elif action == "save_note":
-            text = str(data.get("text", ""))
-            if text:
-                db.save_note(text)
-            self._send_response({"action": "note_saved"})
-
-        elif action == "get_notes":
-            limit = int(data.get("limit", 50))
-            offset = int(data.get("offset", 0))
-            rows = db.get_notes(limit, offset)
-            self._send_response({"action": "notes", "data": rows, "append": offset > 0})
-
-        elif action == "search_notes":
-            query = str(data.get("query", ""))
-            limit = int(data.get("limit", 50))
-            offset = int(data.get("offset", 0))
-            rows = db.search_notes(query, limit, offset)
-            self._send_response({"action": "notes", "data": rows, "append": offset > 0})
-
-        elif action == "update_note":
-            row_id = int(data.get("id", 0))
-            text = str(data.get("text", ""))
-            db.update_note(row_id, text)
-            self._send_response({"action": "note_updated", "id": row_id, "text": text})
-
-        elif action == "delete_note":
-            row_id = int(data.get("id", 0))
-            db.delete_note(row_id)
-            self._send_response({"action": "note_deleted", "id": row_id})
-
-        # --- Дневник ---
-        elif action == "get_diary":
-            date = str(data.get("date", ""))
-            entry = db.get_diary(date)
-            self._send_response({"action": "diary", "data": entry})
-
-        elif action == "save_diary":
-            date = str(data.get("date", ""))
-            text = str(data.get("text", ""))
-            db.save_diary(date, text)
-            self._send_response({"action": "diary_saved"})
-
-        elif action == "get_diary_streak":
-            streak = db.get_diary_streak()
-            self._send_response({"action": "diary_streak", "data": streak})
-
-        # --- Задачи ---
-        elif action == "save_task":
-            text = str(data.get("text", ""))
-            if text:
-                db.save_task(text)
-            self._send_response({"action": "task_saved"})
-
-        elif action == "get_tasks":
-            f = str(data.get("filter", "all"))
-            rows = db.get_tasks(f)
-            self._send_response({"action": "tasks", "data": rows})
-
-        elif action == "toggle_task":
-            row_id = int(data.get("id", 0))
-            db.toggle_task(row_id)
-            self._send_response({"action": "task_toggled"})
-
-        elif action == "update_task":
-            row_id = int(data.get("id", 0))
-            text = str(data.get("text", ""))
-            db.update_task(row_id, text)
-            self._send_response({"action": "task_updated", "id": row_id, "text": text})
-
-        elif action == "delete_task":
-            row_id = int(data.get("id", 0))
-            db.delete_task(row_id)
-            self._send_response({"action": "task_deleted", "id": row_id})
-
-        # --- Voice recording ---
-        elif action == "start_voice":
-            target = str(data.get("target", "note"))
-            if self._voice_recording or not self._recorder or not self._transcriber:
-                self._send_response({"action": "voice_error", "error": "busy"})
-                return
-            if self._recorder.is_recording:
-                self._send_response({"action": "voice_error", "error": "busy"})
-                return
-            self._voice_recording = True
-            self._voice_target = target
-            self._send_response({"action": "voice_started"})
-
-            import threading
-            def _start():
-                try:
-                    self._recorder.start()
-                except Exception:
-                    log.exception("Voice recording failed to start")
-                    self._voice_recording = False
-                    def _err():
-                        self._send_response({"action": "voice_error", "error": "mic"})
-                    AppHelper.callAfter(_err)
-            threading.Thread(target=_start, daemon=True).start()
-
-        # --- Long sessions ---
-        elif action == "get_sessions":
-            limit = int(data.get("limit", 50))
-            offset = int(data.get("offset", 0))
-            rows = db.session_list(limit, offset)
-            self._send_response({
-                "action": "sessions",
-                "data": rows,
-                "append": offset > 0,
-            })
-
-        elif action == "search_sessions":
-            query = str(data.get("query", ""))
-            limit = int(data.get("limit", 50))
-            offset = int(data.get("offset", 0))
-            rows = db.session_search(query, limit, offset)
-            self._send_response({
-                "action": "sessions",
-                "data": rows,
-                "append": offset > 0,
-            })
-
-        elif action == "get_session_detail":
-            sid = int(data.get("id", 0))
-            row = db.session_get(sid)
-            self._send_response({"action": "session_detail", "data": row})
-
-        elif action == "delete_session":
-            sid = int(data.get("id", 0))
-            row = db.session_get(sid)
-            if row and row.get("audio_path"):
-                try:
-                    Path(row["audio_path"]).unlink(missing_ok=True)
-                except Exception:
-                    log.exception("Failed to delete session WAV")
-            db.session_delete(sid)
-            self._send_response({"action": "session_deleted", "id": sid})
-
-        elif action == "delete_session_audio":
-            sid = int(data.get("id", 0))
-            row = db.session_get(sid)
-            if row and row.get("audio_path"):
-                try:
-                    Path(row["audio_path"]).unlink(missing_ok=True)
-                    self._send_response({
-                        "action": "session_audio_deleted", "id": sid})
-                except Exception:
-                    log.exception("Failed to delete WAV")
-                    self._send_response({
-                        "action": "session_audio_delete_error", "id": sid})
-            else:
-                self._send_response({
-                    "action": "session_audio_delete_error", "id": sid})
-
-        elif action == "retry_session":
-            sid = int(data.get("id", 0))
-            import threading as _th
-            _th.Thread(
-                target=self._retry_session_worker,
-                args=(sid,), daemon=True,
-                name="session-retry",
-            ).start()
-            self._send_response({"action": "session_retry_started", "id": sid})
-
-        elif action == "update_session_text":
-            sid = int(data.get("id", 0))
-            text = str(data.get("text", ""))
-            db.session_set_text(sid, text)
-            self._send_response({
-                "action": "session_text_updated", "id": sid, "text": text})
-
-        elif action == "stop_voice":
-            if not self._voice_recording:
-                return
-            target = self._voice_target
-            self._voice_recording = False
-            self._voice_target = None
-
-            import threading
-            def _stop_and_transcribe():
-                try:
-                    audio = self._recorder.stop()
-                    if len(audio) == 0:
-                        def _empty():
-                            self._send_response({"action": "voice_result", "target": target, "text": ""})
-                        AppHelper.callAfter(_empty)
-                        return
-                    text = self._transcriber.transcribe(audio)
-                    if text:
-                        if target == "note":
-                            db.save_note(text)
-                        elif target == "task":
-                            db.save_task(text)
-                        # diary: JS handles save_diary with appended text
-                    def _done():
-                        self._send_response({"action": "voice_result", "target": target, "text": text or ""})
-                    AppHelper.callAfter(_done)
-                except Exception:
-                    log.exception("Voice transcription failed")
-                    def _err():
-                        self._send_response({"action": "voice_error", "error": "transcribe"})
-                    AppHelper.callAfter(_err)
-            threading.Thread(target=_stop_and_transcribe, daemon=True).start()

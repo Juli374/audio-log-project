@@ -244,134 +244,6 @@ body {
     color: #fff;
 }
 
-/* Sessions */
-.sessions-header {
-    padding: 14px 20px 0;
-}
-.sessions-hint {
-    font-size: 12px;
-    color: var(--text-secondary);
-    background: var(--bg-secondary);
-    padding: 10px 14px;
-    border-radius: 9px;
-    margin-bottom: 10px;
-}
-.session-card {
-    display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
-    transition: background 0.12s;
-    cursor: pointer;
-}
-.session-card:hover {
-    background: var(--bg-secondary);
-}
-.session-icon {
-    font-size: 22px;
-    line-height: 1;
-    flex-shrink: 0;
-    margin-top: 2px;
-    width: 28px;
-    text-align: center;
-}
-.session-body {
-    flex: 1;
-    min-width: 0;
-}
-.session-title {
-    font-size: 13px;
-    color: var(--text);
-    font-weight: 500;
-    margin-bottom: 3px;
-}
-.session-meta {
-    font-size: 11px;
-    color: var(--text-secondary);
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    align-items: center;
-    margin-bottom: 6px;
-}
-.session-status {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 8px;
-    border-radius: 10px;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
-}
-.session-status.status-recording   { background: rgba(255,59,48,0.12);  color: #ff3b30; }
-.session-status.status-transcribing { background: rgba(10,132,255,0.12); color: var(--accent); }
-.session-status.status-done        { background: rgba(48,209,88,0.12);  color: var(--success); }
-.session-status.status-error       { background: rgba(255,59,48,0.12);  color: #ff3b30; }
-.session-status.status-cancelled   { background: var(--bg-secondary);   color: var(--text-secondary); }
-.session-preview {
-    font-size: 13px;
-    color: var(--text);
-    opacity: 0.85;
-    margin-top: 4px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 3.6em;
-    overflow: hidden;
-    position: relative;
-}
-.session-progress-bar {
-    height: 4px;
-    background: var(--bg-secondary);
-    border-radius: 2px;
-    overflow: hidden;
-    margin-top: 6px;
-}
-.session-progress-fill {
-    height: 100%;
-    background: var(--accent);
-    transition: width 0.3s ease;
-}
-.session-actions {
-    display: flex;
-    gap: 6px;
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.12s;
-}
-.session-card:hover .session-actions {
-    opacity: 1;
-}
-.session-actions button {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 13px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.12s;
-}
-.session-actions button:hover {
-    background: var(--bg-secondary);
-    color: var(--text);
-}
-.session-actions button.danger:hover {
-    background: var(--danger);
-    color: #fff;
-}
-.session-error-msg {
-    font-size: 11px;
-    color: var(--danger);
-    margin-top: 4px;
-    font-family: -apple-system-mono, ui-monospace, monospace;
-}
-
 /* Detail modal */
 .detail-overlay {
     display: none;
@@ -624,267 +496,6 @@ body {
 .history-page { display: block; }
 .history-page.hidden { display: none; }
 
-/* ─── Voice record button ─── */
-.voice-area {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 24px 20px 16px;
-    gap: 10px;
-}
-
-.voice-btn {
-    width: 56px;
-    height: 56px;
-    border-radius: 50%;
-    border: none;
-    background: var(--accent);
-    color: #fff;
-    font-size: 24px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    position: relative;
-}
-
-.voice-btn:hover {
-    background: var(--accent-hover);
-    transform: scale(1.05);
-}
-
-.voice-btn.recording {
-    background: var(--danger);
-    animation: pulse-ring 1.5s ease-out infinite;
-}
-
-.voice-btn.processing {
-    background: var(--text-secondary);
-    cursor: wait;
-}
-
-@keyframes pulse-ring {
-    0% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.4); }
-    70% { box-shadow: 0 0 0 12px rgba(255, 59, 48, 0); }
-    100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0); }
-}
-
-.voice-status {
-    font-size: 13px;
-    color: var(--text-secondary);
-    min-height: 20px;
-}
-
-/* ─── Input row (tasks — kept for manual fallback) ─── */
-.input-row {
-    display: flex;
-    gap: 8px;
-    padding: 16px 20px;
-    align-items: flex-end;
-}
-
-/* ─── Diary ─── */
-.diary-nav {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 16px 20px 8px;
-}
-
-.diary-nav-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.diary-nav button {
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    width: 32px;
-    height: 32px;
-    font-size: 16px;
-    cursor: pointer;
-    color: var(--text);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-}
-
-.diary-nav button:hover {
-    background: var(--bg-secondary);
-}
-
-.diary-date {
-    font-size: 16px;
-    font-weight: 600;
-}
-
-.diary-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.diary-streak {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-
-.diary-today-btn {
-    padding: 4px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.15s;
-    display: none;
-}
-
-.diary-today-btn:hover {
-    background: var(--bg-secondary);
-    color: var(--text);
-}
-
-.diary-text {
-    padding: 0 20px 20px;
-    font-size: 14px;
-    line-height: 1.7;
-    white-space: pre-wrap;
-    word-break: break-word;
-    user-select: text;
-    color: var(--text);
-    min-height: 100px;
-}
-
-.diary-text:empty::before {
-    content: "Пока пусто — надиктуйте запись";
-    color: var(--text-secondary);
-}
-
-/* ─── Tasks ─── */
-.task-filters {
-    display: flex;
-    gap: 4px;
-    padding: 0 20px 12px;
-    align-items: center;
-}
-
-.task-filter {
-    padding: 4px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 500;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-
-.task-filter:hover {
-    background: var(--bg-secondary);
-    color: var(--text);
-}
-
-.task-filter.active {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-}
-
-.task-counter {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-left: 8px;
-}
-
-.task-list {
-    padding: 0 20px 20px;
-}
-
-.task-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    margin-bottom: 6px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    transition: all 0.15s;
-}
-
-.task-item:hover {
-    border-color: var(--accent);
-}
-
-.task-checkbox {
-    width: 20px;
-    height: 20px;
-    border-radius: 6px;
-    border: 2px solid var(--border);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-    flex-shrink: 0;
-    background: transparent;
-    color: transparent;
-    font-size: 12px;
-}
-
-.task-checkbox.done {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
-}
-
-.task-text {
-    flex: 1;
-    font-size: 14px;
-    word-break: break-word;
-    user-select: text;
-    cursor: pointer;
-}
-
-.task-text.done {
-    text-decoration: line-through;
-    color: var(--text-secondary);
-}
-
-.task-delete {
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 14px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
-    opacity: 0;
-}
-
-.task-item:hover .task-delete {
-    opacity: 1;
-}
-
-.task-delete:hover {
-    background: var(--danger);
-    color: #fff;
-}
 </style>
 </head>
 <body>
@@ -893,11 +504,7 @@ body {
     <div class="header-top">
         <h1>AudioLog</h1>
         <div class="tabs">
-            <button class="tab" data-tab="notes" onclick="app.switchTab('notes')">Идеи</button>
-            <button class="tab active" data-tab="diary" onclick="app.switchTab('diary')">Дневник</button>
-            <button class="tab" data-tab="tasks" onclick="app.switchTab('tasks')">Задачи</button>
-            <button class="tab" data-tab="sessions" onclick="app.switchTab('sessions')">Сессии</button>
-            <button class="tab" data-tab="history" onclick="app.switchTab('history')">История</button>
+            <button class="tab active" data-tab="history" onclick="app.switchTab('history')">История</button>
             <button class="tab tab-settings" data-tab="settings" onclick="app.switchTab('settings')">&#x2699;</button>
         </div>
     </div>
@@ -923,58 +530,6 @@ body {
         </div>
     </div>
     <div class="entries" id="entriesList"></div>
-</div>
-
-<!-- ═══ Notes ═══ -->
-<div class="page" id="notesPage">
-    <div class="voice-area">
-        <button class="voice-btn" id="noteVoiceBtn" onclick="app.toggleVoice('note')">&#x1F3A4;</button>
-        <div class="voice-status" id="noteVoiceStatus">Нажмите для записи</div>
-    </div>
-    <div class="entries" id="notesList"></div>
-</div>
-
-<!-- ═══ Diary ═══ -->
-<div class="page" id="diaryPage">
-    <div class="diary-nav">
-        <div class="diary-nav-left">
-            <button onclick="app.prevDay()">&#x2039;</button>
-            <span class="diary-date" id="diaryDate"></span>
-            <button onclick="app.nextDay()">&#x203A;</button>
-        </div>
-        <div class="diary-right">
-            <span class="diary-streak" id="diaryStreak"></span>
-            <button class="diary-today-btn" id="diaryTodayBtn" onclick="app.goToday()">Сегодня</button>
-        </div>
-    </div>
-    <div class="voice-area">
-        <button class="voice-btn" id="diaryVoiceBtn" onclick="app.toggleVoice('diary')">&#x1F3A4;</button>
-        <div class="voice-status" id="diaryVoiceStatus">Нажмите для записи</div>
-    </div>
-    <div class="diary-text" id="diaryText"></div>
-</div>
-
-<!-- ═══ Tasks ═══ -->
-<div class="page" id="tasksPage">
-    <div class="voice-area">
-        <button class="voice-btn" id="taskVoiceBtn" onclick="app.toggleVoice('task')">&#x1F3A4;</button>
-        <div class="voice-status" id="taskVoiceStatus">Нажмите для записи</div>
-    </div>
-    <div class="task-filters">
-        <button class="task-filter active" data-filter="all" onclick="app.setTaskFilter('all')">Все</button>
-        <button class="task-filter" data-filter="active" onclick="app.setTaskFilter('active')">Активные</button>
-        <button class="task-filter" data-filter="completed" onclick="app.setTaskFilter('completed')">Выполненные</button>
-        <span class="task-counter" id="taskCounter"></span>
-    </div>
-    <div class="task-list" id="taskList"></div>
-</div>
-
-<!-- ═══ Sessions ═══ -->
-<div class="page" id="sessionsPage">
-    <div class="sessions-header">
-        <div class="sessions-hint">📼 Двойной тап Left Option — начать/остановить длинную запись</div>
-    </div>
-    <div class="entries" id="sessionsList"></div>
 </div>
 
 <!-- ═══ Settings ═══ -->
@@ -1120,6 +675,29 @@ body {
         </select>
     </div>
     <div class="setting-group">
+        <div class="setting-label">Клавиша перевода</div>
+        <div class="setting-description">Выдели текст в любом приложении и дважды нажми эту клавишу — перевод появится по центру экрана. Должна отличаться от клавиш записи и сессии</div>
+        <select class="setting-select" id="settingTranslateHotkeyKeycode">
+            <option value="62">Right ⌃ (Control)</option>
+            <option value="59">Left ⌃ (Control)</option>
+            <option value="54">Right ⌘ (Command)</option>
+            <option value="55">Left ⌘ (Command)</option>
+            <option value="61">Right ⌥ (Option)</option>
+            <option value="58">Left ⌥ (Option)</option>
+            <option value="60">Right ⇧ (Shift)</option>
+            <option value="56">Left ⇧ (Shift)</option>
+        </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Язык перевода</div>
+        <div class="setting-description">На какой язык переводить выделенный текст</div>
+        <select class="setting-select" id="settingTranslateTarget">
+            <option value="ru">Русский</option>
+            <option value="en">English</option>
+            <option value="uk">Українська</option>
+        </select>
+    </div>
+    <div class="setting-group">
         <div class="setting-label">Макс. время записи</div>
         <div class="setting-description">Автоматическая остановка записи через указанное время</div>
         <select class="setting-select" id="settingMaxRecording">
@@ -1128,6 +706,25 @@ body {
             <option value="600">10 мин</option>
             <option value="1800">30 мин</option>
         </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Автовставка текста</div>
+        <div class="setting-description">macOS должна разрешить приложению нажимать клавиши — без этого текст только копируется в буфер, а ⌘V приходится жать вручную. Статус: <b id="axStatus">проверяю…</b></div>
+        <div>
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="axBtn" onclick="app.requestAccessibility()">Разрешить автовставку</button>
+        </div>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Обновления</div>
+        <div class="setting-description">Текущая версия: <b id="appVersion">—</b>. Приложение само проверяет обновления и ставит их, когда не идёт запись — переустанавливать ничего не нужно.</div>
+        <select class="setting-select" id="settingAutoUpdate">
+            <option value="1">Обновлять автоматически</option>
+            <option value="0">Не обновлять</option>
+        </select>
+        <div style="margin-top: 10px;">
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="checkUpdateBtn" onclick="app.checkUpdates()">Проверить обновления</button>
+            <span id="updateResult" style="margin-left: 10px; font-size: 13px;"></span>
+        </div>
     </div>
     <button class="save-btn" onclick="app.saveSettings()">Сохранить</button>
     <span id="saveNote" style="margin-left: 10px; font-size: 12px; color: var(--text-secondary);">Смена режима требует перезапуска</span>
@@ -1161,33 +758,12 @@ const app = {
     hasMore: true,
     PAGE_SIZE: 50,
 
-    // Notes state
-    notesData: [],
-    notesOffset: 0,
-    notesHasMore: true,
-
-    // Sessions state
-    sessionsData: [],
-    sessionsOffset: 0,
-    sessionsHasMore: true,
-
-    // Voice recording state
-    voiceRecording: false,
-    voiceTarget: null,  // 'note' or 'task'
-
-    // Diary state
-    currentDiaryDate: new Date().toISOString().split('T')[0],
-    currentDiaryText: '',
-
-    // Tasks state
-    taskFilter: 'all',
-
     // Detail modal state
-    detailItem: null,  // { id, text, type: 'entry'|'note'|'task' }
+    detailItem: null,  // { id, text, type: 'entry' }
     detailOriginal: '',
 
     // Current tab
-    currentTab: 'diary',
+    currentTab: 'history',
 
     init() {
         document.getElementById('searchInput').addEventListener('input',
@@ -1196,7 +772,8 @@ const app = {
         this.send('get_stats');
         this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
         this.send('get_settings');
-        this.switchTab('diary');
+        this.send('get_permissions');
+        this.switchTab('history');
     },
 
     send(action, data) {
@@ -1214,6 +791,18 @@ const app = {
                 break;
             case 'settings':
                 this.applySettings(response.data);
+                if (response.version) {
+                    document.getElementById('appVersion').textContent = response.version;
+                }
+                if (response.staged_version) {
+                    this.onUpdateStatus({status: 'staged', detail: response.staged_version});
+                }
+                break;
+            case 'update_status':
+                this.onUpdateStatus(response);
+                break;
+            case 'permissions':
+                this.onPermissions(response);
                 break;
             case 'deleted':
                 this.removeEntry(response.id);
@@ -1231,76 +820,9 @@ const app = {
             case 'test_groq_result':
                 this.onTestGroqResult(response);
                 break;
-            // Notes
-            case 'notes':
-                this.renderNotes(response.data, response.append);
-                break;
-            case 'note_deleted':
-                this.removeNoteEl(response.id);
-                break;
-            // Voice
-            case 'voice_started':
-                break;
-            case 'voice_result':
-                this.onVoiceResult(response.target, response.text);
-                break;
-            case 'voice_error':
-                this.onVoiceError(response.error);
-                break;
-            // Diary
-            case 'diary':
-                this.renderDiary(response.data);
-                break;
-            case 'diary_saved':
-                break;
-            case 'diary_streak':
-                this.renderStreak(response.data);
-                break;
-            // Tasks
-            case 'tasks':
-                this.renderTasks(response.data);
-                break;
-            case 'task_saved':
-                this.loadTasks();
-                break;
-            case 'task_toggled':
-                this.loadTasks();
-                break;
-            case 'task_deleted':
-                this.removeTaskEl(response.id);
-                break;
             // Detail updates
             case 'entry_updated':
                 this.onEntryUpdated(response.id, response.text);
-                break;
-            case 'note_updated':
-                this.onNoteUpdated(response.id, response.text);
-                break;
-            // Sessions
-            case 'sessions':
-                this.renderSessions(response.data, response.append);
-                break;
-            case 'session_detail':
-                this.onSessionDetail(response.data);
-                break;
-            case 'session_deleted':
-                this.removeSessionEl(response.id);
-                break;
-            case 'session_retry_started':
-                this.showToast('Повтор транскрибации…');
-                break;
-            case 'session_text_updated':
-                this.onSessionTextUpdated(response.id, response.text);
-                break;
-            case 'session_audio_deleted':
-                this.showToast('Аудио удалено');
-                this.loadSessions();
-                break;
-            case 'session_audio_delete_error':
-                this.showToast('Не удалось удалить аудио');
-                break;
-            case 'task_updated':
-                this.onTaskUpdated(response.id, response.text);
                 break;
         }
     },
@@ -1315,36 +837,17 @@ const app = {
 
         // Hide all pages
         document.getElementById('historyPage').classList.add('hidden');
-        document.getElementById('notesPage').classList.remove('active');
-        document.getElementById('diaryPage').classList.remove('active');
-        document.getElementById('tasksPage').classList.remove('active');
-        document.getElementById('sessionsPage').classList.remove('active');
         document.getElementById('settingsPage').classList.remove('active');
 
-        // Show search box for history, notes, sessions
+        // Search box is only meaningful on the history tab
         const searchBox = document.getElementById('searchBox');
-        searchBox.style.display = (tab === 'history' || tab === 'notes' || tab === 'sessions') ? '' : 'none';
+        searchBox.style.display = (tab === 'history') ? '' : 'none';
 
-        if (tab === 'history') {
+        if (tab === 'settings') {
+            document.getElementById('settingsPage').classList.add('active');
+        } else {
             document.getElementById('historyPage').classList.remove('hidden');
             document.getElementById('searchInput').placeholder = 'Поиск по записям…';
-        } else if (tab === 'notes') {
-            document.getElementById('notesPage').classList.add('active');
-            document.getElementById('searchInput').placeholder = 'Поиск по идеям…';
-            this.loadNotes();
-        } else if (tab === 'diary') {
-            document.getElementById('diaryPage').classList.add('active');
-            this.loadDiary(this.currentDiaryDate);
-            this.loadStreak();
-        } else if (tab === 'tasks') {
-            document.getElementById('tasksPage').classList.add('active');
-            this.loadTasks();
-        } else if (tab === 'sessions') {
-            document.getElementById('sessionsPage').classList.add('active');
-            document.getElementById('searchInput').placeholder = 'Поиск по сессиям…';
-            this.loadSessions();
-        } else if (tab === 'settings') {
-            document.getElementById('settingsPage').classList.add('active');
         }
     },
 
@@ -1443,347 +946,20 @@ const app = {
     loadMore() {
         const params = { limit: this.PAGE_SIZE, offset: this.offset };
         if (this.query) {
-            if (this.currentTab === 'notes') {
-                this.send('search_notes', Object.assign({ query: this.query }, params));
-            } else {
-                this.send('search', Object.assign({ query: this.query }, params));
-            }
+            this.send('search', Object.assign({ query: this.query }, params));
         } else {
-            if (this.currentTab === 'notes') {
-                this.send('get_notes', params);
-            } else {
-                this.send('get_history', params);
-            }
+            this.send('get_history', params);
         }
     },
 
     onSearch(value) {
         this.query = value.trim();
-
-        if (this.currentTab === 'notes') {
-            this.notesOffset = 0;
-            if (this.query) {
-                this.send('search_notes', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
-            } else {
-                this.send('get_notes', { limit: this.PAGE_SIZE, offset: 0 });
-            }
-        } else if (this.currentTab === 'sessions') {
-            this.sessionsOffset = 0;
-            if (this.query) {
-                this.send('search_sessions', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
-            } else {
-                this.send('get_sessions', { limit: this.PAGE_SIZE, offset: 0 });
-            }
+        this.offset = 0;
+        if (this.query) {
+            this.send('search', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
         } else {
-            this.offset = 0;
-            if (this.query) {
-                this.send('search', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
-            } else {
-                this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
-            }
+            this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
         }
-    },
-
-    // ─── Voice recording ───
-
-    toggleVoice(target) {
-        if (this.voiceRecording) {
-            this.stopVoice();
-        } else {
-            this.startVoice(target);
-        }
-    },
-
-    startVoice(target) {
-        this.voiceRecording = true;
-        this.voiceTarget = target;
-        const btn = document.getElementById(target + 'VoiceBtn');
-        const status = document.getElementById(target + 'VoiceStatus');
-        btn.classList.add('recording');
-        btn.innerHTML = '&#x23F9;';
-        status.textContent = 'Запись… нажмите для остановки';
-        this.send('start_voice', { target });
-    },
-
-    stopVoice() {
-        const target = this.voiceTarget;
-        const btn = document.getElementById(target + 'VoiceBtn');
-        const status = document.getElementById(target + 'VoiceStatus');
-        btn.classList.remove('recording');
-        btn.classList.add('processing');
-        btn.innerHTML = '&#x23F3;';
-        status.textContent = 'Распознавание…';
-        this.send('stop_voice');
-    },
-
-    onVoiceResult(target, text) {
-        this.voiceRecording = false;
-        this.voiceTarget = null;
-        const btn = document.getElementById(target + 'VoiceBtn');
-        const status = document.getElementById(target + 'VoiceStatus');
-        btn.classList.remove('recording', 'processing');
-        btn.innerHTML = '&#x1F3A4;';
-
-        if (text) {
-            status.textContent = 'Добавлено!';
-            if (target === 'note') {
-                this.showToast('Идея добавлена');
-                this.loadNotes();
-            } else if (target === 'task') {
-                this.showToast('Задача добавлена');
-                this.loadTasks();
-            } else if (target === 'diary') {
-                this.showToast('Запись добавлена');
-                // Append to current diary text
-                const sep = this.currentDiaryText ? '\n' : '';
-                const newText = this.currentDiaryText + sep + text;
-                this.currentDiaryText = newText;
-                document.getElementById('diaryText').textContent = newText;
-                this.send('save_diary', { date: this.currentDiaryDate, text: newText });
-                this.loadStreak();
-            }
-        } else {
-            status.textContent = 'Не удалось распознать';
-        }
-        setTimeout(() => {
-            status.textContent = 'Нажмите для записи';
-        }, 3000);
-    },
-
-    onVoiceError(error) {
-        const target = this.voiceTarget || 'note';
-        this.voiceRecording = false;
-        this.voiceTarget = null;
-        const btn = document.getElementById(target + 'VoiceBtn');
-        const status = document.getElementById(target + 'VoiceStatus');
-        btn.classList.remove('recording', 'processing');
-        btn.innerHTML = '&#x1F3A4;';
-        status.textContent = error === 'busy' ? 'Запись уже идёт' : 'Ошибка записи';
-        setTimeout(() => {
-            status.textContent = 'Нажмите для записи';
-        }, 3000);
-    },
-
-    // ─── Notes ───
-
-    loadNotes() {
-        this.notesOffset = 0;
-        if (this.query && this.currentTab === 'notes') {
-            this.send('search_notes', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
-        } else {
-            this.send('get_notes', { limit: this.PAGE_SIZE, offset: 0 });
-        }
-    },
-
-    renderNotes(data, append) {
-        const list = document.getElementById('notesList');
-
-        if (!append) {
-            this.notesData = [];
-            this.notesOffset = 0;
-            list.innerHTML = '';
-        }
-
-        this.notesData = this.notesData.concat(data);
-        this.notesOffset += data.length;
-        this.notesHasMore = data.length >= this.PAGE_SIZE;
-
-        if (this.notesData.length === 0 && !append) {
-            list.innerHTML = '<div class="empty"><div class="empty-icon">📝</div>' +
-                '<div class="empty-text">' +
-                (this.query ? 'Ничего не найдено' : 'Пока нет идей') +
-                '</div></div>';
-            return;
-        }
-
-        data.forEach(note => {
-            const el = document.createElement('div');
-            el.className = 'entry';
-            el.dataset.id = note.id;
-
-            el.innerHTML =
-                '<div class="entry-content">' +
-                    '<div class="entry-time">' + this.formatTime(note.timestamp) + '</div>' +
-                    '<div class="entry-text">' + this.escapeHtml(note.text) + '</div>' +
-                '</div>' +
-                '<button class="entry-delete" title="Удалить">&#x2715;</button>';
-
-            el.querySelector('.entry-content').addEventListener('click', () => {
-                this.openDetail(note.id, note.text, note.timestamp, 'note');
-            });
-
-            el.querySelector('.entry-delete').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.send('delete_note', { id: note.id });
-            });
-
-            list.appendChild(el);
-        });
-
-        const oldBtn = list.querySelector('.load-more');
-        if (oldBtn) oldBtn.remove();
-
-        if (this.notesHasMore) {
-            const btn = document.createElement('button');
-            btn.className = 'load-more';
-            btn.textContent = 'Загрузить ещё';
-            btn.onclick = () => {
-                const params = { limit: this.PAGE_SIZE, offset: this.notesOffset };
-                if (this.query) {
-                    this.send('search_notes', Object.assign({ query: this.query }, params));
-                } else {
-                    this.send('get_notes', params);
-                }
-            };
-            list.appendChild(btn);
-        }
-    },
-
-    removeNoteEl(id) {
-        this.notesData = this.notesData.filter(n => n.id !== id);
-        const el = document.querySelector(`#notesList .entry[data-id="${id}"]`);
-        if (el) {
-            el.style.opacity = '0';
-            el.style.transform = 'translateX(-20px)';
-            el.style.transition = 'all 0.25s';
-            setTimeout(() => el.remove(), 250);
-        }
-    },
-
-    // ─── Diary ───
-
-    loadDiary(date) {
-        this.currentDiaryDate = date;
-
-        // Update date display
-        const d = new Date(date + 'T00:00:00');
-        const opts = { day: 'numeric', month: 'long', year: 'numeric' };
-        document.getElementById('diaryDate').textContent = d.toLocaleDateString('ru', opts);
-
-        // Show/hide "Today" button
-        const today = new Date().toISOString().split('T')[0];
-        document.getElementById('diaryTodayBtn').style.display = (date === today) ? 'none' : '';
-
-        this.send('get_diary', { date });
-    },
-
-    renderDiary(data) {
-        this.currentDiaryText = data ? (data.text || '') : '';
-        document.getElementById('diaryText').textContent = this.currentDiaryText;
-    },
-
-    prevDay() {
-        const d = new Date(this.currentDiaryDate + 'T00:00:00');
-        d.setDate(d.getDate() - 1);
-        this.loadDiary(d.toISOString().split('T')[0]);
-    },
-
-    nextDay() {
-        const d = new Date(this.currentDiaryDate + 'T00:00:00');
-        d.setDate(d.getDate() + 1);
-        this.loadDiary(d.toISOString().split('T')[0]);
-    },
-
-    goToday() {
-        this.loadDiary(new Date().toISOString().split('T')[0]);
-    },
-
-    loadStreak() {
-        this.send('get_diary_streak');
-    },
-
-    renderStreak(count) {
-        const el = document.getElementById('diaryStreak');
-        if (count > 0) {
-            el.textContent = 'Серия: ' + count + ' ' + this.pluralDays(count);
-        } else {
-            el.textContent = '';
-        }
-    },
-
-    pluralDays(n) {
-        const mod10 = n % 10;
-        const mod100 = n % 100;
-        if (mod10 === 1 && mod100 !== 11) return 'день';
-        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'дня';
-        return 'дней';
-    },
-
-    // ─── Tasks ───
-
-    loadTasks() {
-        this.send('get_tasks', { filter: this.taskFilter });
-    },
-
-    setTaskFilter(filter) {
-        this.taskFilter = filter;
-        document.querySelectorAll('.task-filter').forEach(b => b.classList.remove('active'));
-        document.querySelector(`.task-filter[data-filter="${filter}"]`).classList.add('active');
-        this.loadTasks();
-    },
-
-    renderTasks(data) {
-        const list = document.getElementById('taskList');
-        list.innerHTML = '';
-
-        const activeCount = data.filter(t => !t.is_done).length;
-        document.getElementById('taskCounter').textContent = activeCount > 0
-            ? activeCount + ' ' + this.pluralActive(activeCount) : '';
-
-        if (data.length === 0) {
-            list.innerHTML = '<div class="empty"><div class="empty-icon">✓</div>' +
-                '<div class="empty-text">' +
-                (this.taskFilter === 'completed' ? 'Нет выполненных' :
-                 this.taskFilter === 'active' ? 'Все задачи выполнены!' : 'Нет задач') +
-                '</div></div>';
-            return;
-        }
-
-        data.forEach(task => {
-            const el = document.createElement('div');
-            el.className = 'task-item';
-            el.dataset.id = task.id;
-
-            const done = task.is_done ? true : false;
-
-            el.innerHTML =
-                '<div class="task-checkbox' + (done ? ' done' : '') + '">' + (done ? '&#x2713;' : '') + '</div>' +
-                '<span class="task-text' + (done ? ' done' : '') + '">' + this.escapeHtml(task.text) + '</span>' +
-                '<button class="task-delete" title="Удалить">&#x2715;</button>';
-
-            el.querySelector('.task-checkbox').addEventListener('click', () => {
-                this.send('toggle_task', { id: task.id });
-            });
-
-            el.querySelector('.task-text').addEventListener('click', () => {
-                this.openDetail(task.id, task.text, task.timestamp, 'task');
-            });
-
-            el.querySelector('.task-delete').addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.send('delete_task', { id: task.id });
-            });
-
-            list.appendChild(el);
-        });
-    },
-
-    removeTaskEl(id) {
-        const el = document.querySelector(`#taskList .task-item[data-id="${id}"]`);
-        if (el) {
-            el.style.opacity = '0';
-            el.style.transform = 'translateX(-20px)';
-            el.style.transition = 'all 0.25s';
-            setTimeout(() => { el.remove(); this.loadTasks(); }, 250);
-        }
-    },
-
-    pluralActive(n) {
-        const mod10 = n % 10;
-        const mod100 = n % 100;
-        if (mod10 === 1 && mod100 !== 11) return 'активная';
-        if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) return 'активных';
-        return 'активных';
     },
 
     // ─── Settings (unchanged) ───
@@ -1795,6 +971,8 @@ const app = {
         document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
         document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
         document.getElementById('settingSessionHotkeyKeycode').value = String(s.session_hotkey_keycode ?? 58);
+        document.getElementById('settingTranslateHotkeyKeycode').value = String(s.translate_hotkey_keycode ?? 62);
+        document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
         document.getElementById('settingTranscriptionMode').value = s.transcription_mode || 'local';
         document.getElementById('settingApiKey').value = s.openai_api_key || '';
@@ -1806,14 +984,16 @@ const app = {
         const mode = s.cleanup_mode || (s.cleanup_enabled ? 'light' : 'off');
         document.getElementById('settingCleanupMode').value = mode;
         document.getElementById('settingTargetLanguage').value = s.target_language || '';
+        document.getElementById('settingAutoUpdate').value = (s.auto_update === false) ? '0' : '1';
         this.onTranscriptionModeChange();
     },
 
     saveSettings() {
         const shortKc = parseInt(document.getElementById('settingHotkeyKeycode').value) || 61;
         const longKc = parseInt(document.getElementById('settingSessionHotkeyKeycode').value) || 58;
-        if (shortKc === longKc) {
-            this.showToast('Клавиша записи и сессии должны отличаться');
+        const translateKc = parseInt(document.getElementById('settingTranslateHotkeyKeycode').value) || 62;
+        if (new Set([shortKc, longKc, translateKc]).size < 3) {
+            this.showToast('Клавиши записи, сессии и перевода должны отличаться');
             return;
         }
         const s = {
@@ -1823,6 +1003,8 @@ const app = {
             hotkey_mode: document.getElementById('settingHotkeyMode').value,
             hotkey_keycode: shortKc,
             session_hotkey_keycode: longKc,
+            translate_hotkey_keycode: translateKc,
+            translate_target: document.getElementById('settingTranslateTarget').value,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
             transcription_mode: document.getElementById('settingTranscriptionMode').value,
             openai_api_key: document.getElementById('settingApiKey').value,
@@ -1832,8 +1014,57 @@ const app = {
             anthropic_api_key: document.getElementById('settingAnthropicKey').value,
             cleanup_mode: document.getElementById('settingCleanupMode').value,
             target_language: document.getElementById('settingTargetLanguage').value,
+            auto_update: document.getElementById('settingAutoUpdate').value === '1',
         };
         this.send('save_settings', s);
+    },
+
+    requestAccessibility() {
+        document.getElementById('axStatus').textContent = 'запрашиваю…';
+        this.send('request_accessibility');
+    },
+
+    onPermissions(r) {
+        const el = document.getElementById('axStatus');
+        const btn = document.getElementById('axBtn');
+        if (!el) return;
+        if (r.accessibility) {
+            el.textContent = 'разрешено';
+            btn.style.display = 'none';
+        } else {
+            el.textContent = 'не разрешено';
+            btn.style.display = '';
+        }
+    },
+
+    checkUpdates() {
+        const btn = document.getElementById('checkUpdateBtn');
+        const result = document.getElementById('updateResult');
+        if (btn.dataset.mode === 'install') {
+            result.textContent = 'Устанавливаю, приложение перезапустится…';
+            this.send('install_update');
+            return;
+        }
+        btn.disabled = true;
+        result.textContent = 'Проверяю…';
+        this.send('check_updates');
+    },
+
+    onUpdateStatus(r) {
+        const btn = document.getElementById('checkUpdateBtn');
+        const result = document.getElementById('updateResult');
+        btn.disabled = false;
+        if (r.status === 'staged') {
+            btn.dataset.mode = 'install';
+            btn.textContent = 'Установить ' + r.detail + ' и перезапустить';
+            result.textContent = 'Обновление проверено и готово';
+        } else if (r.status === 'current') {
+            btn.dataset.mode = '';
+            result.textContent = 'Установлена последняя версия (' + r.detail + ')';
+        } else {
+            btn.dataset.mode = '';
+            result.textContent = r.detail || 'Не удалось проверить обновления';
+        }
     },
 
     onTranscriptionModeChange() {
@@ -1953,12 +1184,6 @@ const app = {
         const { id, type } = this.detailItem;
         if (type === 'entry') {
             this.send('update_entry', { id, text });
-        } else if (type === 'note') {
-            this.send('update_note', { id, text });
-        } else if (type === 'task') {
-            this.send('update_task', { id, text });
-        } else if (type === 'session') {
-            this.send('update_session_text', { id, text });
         }
         this.detailOriginal = text;
         document.getElementById('detailSaveBtn').classList.remove('visible');
@@ -1970,17 +1195,6 @@ const app = {
         if (entry) entry.text = text;
         const el = document.querySelector(`#entriesList .entry[data-id="${id}"] .entry-text`);
         if (el) el.textContent = text;
-    },
-
-    onNoteUpdated(id, text) {
-        const note = this.notesData.find(n => n.id === id);
-        if (note) note.text = text;
-        const el = document.querySelector(`#notesList .entry[data-id="${id}"] .entry-text`);
-        if (el) el.textContent = text;
-    },
-
-    onTaskUpdated(id, text) {
-        this.loadTasks();
     },
 
     // ─── Utilities ───
@@ -2027,214 +1241,6 @@ const app = {
         document.getElementById('searchInput').value = '';
         this.send('get_stats');
         this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
-    },
-
-    // ─── Sessions ───
-
-    loadSessions() {
-        this.sessionsOffset = 0;
-        if (this.query && this.currentTab === 'sessions') {
-            this.send('search_sessions', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
-        } else {
-            this.send('get_sessions', { limit: this.PAGE_SIZE, offset: 0 });
-        }
-    },
-
-    // Called from Python when session state/progress changes
-    onSessionUpdate() {
-        // Only reload if sessions tab is active; otherwise it's a no-op
-        if (this.currentTab === 'sessions') {
-            this.loadSessions();
-        }
-    },
-
-    renderSessions(data, append) {
-        const list = document.getElementById('sessionsList');
-
-        if (!append) {
-            this.sessionsData = [];
-            this.sessionsOffset = 0;
-            list.innerHTML = '';
-        }
-
-        this.sessionsData = this.sessionsData.concat(data);
-        this.sessionsOffset += data.length;
-        this.sessionsHasMore = data.length >= this.PAGE_SIZE;
-
-        if (this.sessionsData.length === 0 && !append) {
-            list.innerHTML = '<div class="empty"><div class="empty-icon">📼</div>' +
-                '<div class="empty-text">' +
-                (this.query ? 'Ничего не найдено' : 'Нет сессий — двойной тап Left Option чтобы начать') +
-                '</div></div>';
-            return;
-        }
-
-        data.forEach(s => list.appendChild(this.createSessionEl(s)));
-
-        const oldBtn = list.querySelector('.load-more');
-        if (oldBtn) oldBtn.remove();
-
-        if (this.sessionsHasMore) {
-            const btn = document.createElement('button');
-            btn.className = 'load-more';
-            btn.textContent = 'Загрузить ещё';
-            btn.onclick = () => this.send('get_sessions',
-                { limit: this.PAGE_SIZE, offset: this.sessionsOffset });
-            list.appendChild(btn);
-        }
-    },
-
-    createSessionEl(s) {
-        const el = document.createElement('div');
-        el.className = 'session-card';
-        el.dataset.id = s.id;
-
-        const statusLabel = {
-            recording:    '🔴 Запись',
-            transcribing: '⚙️ Обработка',
-            done:         '✓ Готово',
-            error:        '✗ Ошибка',
-            cancelled:    '— Отменено',
-        }[s.status] || s.status;
-
-        const icon = s.status === 'recording' ? '🔴'
-                   : s.status === 'transcribing' ? '⚙️'
-                   : s.status === 'error' ? '❌'
-                   : s.status === 'cancelled' ? '✕'
-                   : '📼';
-
-        const duration = this.formatSessionDuration(s.duration_sec || 0);
-        const hasText = s.status === 'done' && s.text && s.text.length > 0;
-        const preview = hasText ? s.text.substring(0, 240) : '';
-
-        let progressBar = '';
-        if (s.status === 'transcribing' && s.chunk_count > 0) {
-            const pct = Math.round((s.chunks_done || 0) / s.chunk_count * 100);
-            progressBar =
-                '<div class="session-meta">Чанк ' + (s.chunks_done || 0) +
-                '/' + s.chunk_count + ' (' + pct + '%)</div>' +
-                '<div class="session-progress-bar">' +
-                '<div class="session-progress-fill" style="width:' + pct + '%"></div></div>';
-        }
-
-        let errorBlock = '';
-        if (s.status === 'error' && s.error) {
-            errorBlock = '<div class="session-error-msg">' + this.escapeHtml(s.error) + '</div>';
-        }
-
-        // Build actions based on status
-        let actions = '';
-        if (s.status === 'done') {
-            actions =
-                '<button title="Копировать текст" data-action="copy">⎘</button>' +
-                '<button title="Повторить" data-action="retry">↻</button>' +
-                '<button title="Удалить" class="danger" data-action="delete">&#x2715;</button>';
-        } else if (s.status === 'error') {
-            actions =
-                '<button title="Повторить" data-action="retry">↻</button>' +
-                '<button title="Удалить" class="danger" data-action="delete">&#x2715;</button>';
-        } else if (s.status === 'cancelled') {
-            actions =
-                '<button title="Удалить" class="danger" data-action="delete">&#x2715;</button>';
-        } else if (s.status === 'transcribing' || s.status === 'recording') {
-            // No actions while in progress
-            actions = '';
-        }
-
-        el.innerHTML =
-            '<div class="session-icon">' + icon + '</div>' +
-            '<div class="session-body">' +
-                '<div class="session-title">' + this.formatTime(s.started_at) +
-                    ' • ' + duration + '</div>' +
-                '<div class="session-meta">' +
-                    '<span class="session-status status-' + s.status + '">' +
-                        statusLabel + '</span>' +
-                '</div>' +
-                progressBar +
-                (preview ? '<div class="session-preview">' + this.escapeHtml(preview) +
-                    (s.text.length > 240 ? '…' : '') + '</div>' : '') +
-                errorBlock +
-            '</div>' +
-            '<div class="session-actions">' + actions + '</div>';
-
-        // Click card → open detail (only if there's text or error)
-        el.addEventListener('click', (e) => {
-            if (e.target.closest('.session-actions')) return;
-            if (s.status === 'done' || s.status === 'error') {
-                this.openSessionDetail(s.id);
-            }
-        });
-
-        // Action buttons
-        el.querySelectorAll('.session-actions button').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const action = btn.dataset.action;
-                if (action === 'copy' && s.text) {
-                    this.send('copy_to_clipboard', { text: s.text });
-                } else if (action === 'retry') {
-                    this.send('retry_session', { id: s.id });
-                } else if (action === 'delete') {
-                    if (confirm('Удалить сессию и WAV-файл?')) {
-                        this.send('delete_session', { id: s.id });
-                    }
-                }
-            });
-        });
-
-        return el;
-    },
-
-    removeSessionEl(id) {
-        this.sessionsData = this.sessionsData.filter(s => s.id !== id);
-        const el = document.querySelector(`#sessionsList .session-card[data-id="${id}"]`);
-        if (el) {
-            el.style.opacity = '0';
-            el.style.transform = 'translateX(-20px)';
-            el.style.transition = 'all 0.25s';
-            setTimeout(() => el.remove(), 250);
-        }
-    },
-
-    openSessionDetail(id) {
-        this.send('get_session_detail', { id });
-    },
-
-    onSessionDetail(row) {
-        if (!row) return;
-        // Reuse the existing detail modal — store as session type so save updates the session
-        this.detailItem = { id: row.id, text: row.text || '', type: 'session' };
-        this.detailOriginal = row.text || '';
-        document.getElementById('detailTime').textContent =
-            this.formatTime(row.started_at) + ' • ' +
-            this.formatSessionDuration(row.duration_sec || 0);
-        const ta = document.getElementById('detailText');
-        ta.value = row.text || (row.error ? '[Ошибка: ' + row.error + ']' : '');
-        ta.style.height = 'auto';
-        document.getElementById('detailSaveBtn').classList.remove('visible');
-        document.getElementById('detailOverlay').classList.add('open');
-        setTimeout(() => {
-            ta.style.height = ta.scrollHeight + 'px';
-            ta.focus();
-        }, 50);
-    },
-
-    onSessionTextUpdated(id, text) {
-        const s = this.sessionsData.find(x => x.id === id);
-        if (s) s.text = text;
-        // Re-render preview if visible
-        const el = document.querySelector(`#sessionsList .session-card[data-id="${id}"] .session-preview`);
-        if (el) el.textContent = text.substring(0, 240) + (text.length > 240 ? '…' : '');
-    },
-
-    formatSessionDuration(sec) {
-        sec = Math.round(sec);
-        if (sec < 60) return sec + ' сек';
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = sec % 60;
-        if (h > 0) return h + ' ч ' + m + ' мин';
-        return m + ' мин ' + s + ' сек';
     }
 };
 

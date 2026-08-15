@@ -34,12 +34,31 @@ def _check_dependencies() -> None:
         sys.exit(0)  # exit 0 so launchd does NOT restart
 
 
+def _apply_pending_update() -> None:
+    """Swap in an update staged by a previous run, then hand off and exit."""
+    try:
+        from updater import apply_staged_at_launch
+    except Exception as e:
+        print(f"updater unavailable: {e}", file=sys.stderr)
+        return
+    try:
+        if apply_staged_at_launch():
+            print("Applying staged update, restarting…", file=sys.stderr)
+            sys.exit(0)
+    except SystemExit:
+        raise
+    except Exception as e:
+        print(f"could not apply staged update: {e}", file=sys.stderr)
+
+
 def main() -> None:
     _check_dependencies()
 
     if not _acquire_lock():
         print("AudioLog is already running", file=sys.stderr)
         sys.exit(0)
+
+    _apply_pending_update()
 
     config = Config()
 

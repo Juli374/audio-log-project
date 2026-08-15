@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Install AudioLog into /Applications and register it as a LaunchAgent.
+#
+# The app must live outside the git checkout: auto-update replaces the whole
+# bundle, and it needs a stable path that does not depend on this repo.
+#
+#   bash install.sh          → install dist/AudioLog.app to /Applications
+#   APP_DEST=~/Applications bash install.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -6,36 +13,53 @@ PLIST_NAME="com.audiolog.dictation"
 PLIST_SRC="$SCRIPT_DIR/${PLIST_NAME}.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/${PLIST_NAME}.plist"
 LOG_DIR="$HOME/Library/Logs/audio-log"
+APP_DEST="${APP_DEST:-/Applications}"
+APP_PATH="$APP_DEST/AudioLog.app"
+BUILT_APP="$SCRIPT_DIR/dist/AudioLog.app"
 
-echo "=== Installing audio-log as LaunchAgent ==="
+echo "=== Installing AudioLog ==="
 
-# Determine executable: prefer AudioLog.app, fallback to venv python
-APP_EXEC="$SCRIPT_DIR/AudioLog.app/Contents/MacOS/audiolog"
-if [ -f "$APP_EXEC" ]; then
-    PROGRAM_ARGS="<string>${APP_EXEC}</string>"
-    echo "Using AudioLog.app bundle"
+# ── stop whatever is running now ────────────────────────────────────────────
+launchctl bootout "gui/$(id -u)/${PLIST_NAME}" 2>/dev/null && \
+    echo "Stopped running service." || true
+pkill -f "AudioLog.app/Contents/MacOS/" 2>/dev/null && \
+    echo "Stopped running app." || true
+sleep 1
+
+# ── figure out what to install ──────────────────────────────────────────────
+if [ -d "$BUILT_APP" ]; then
+    echo "Installing $BUILT_APP → $APP_PATH"
+    rm -rf "$APP_PATH"
+    ditto "$BUILT_APP" "$APP_PATH"
+    xattr -dr com.apple.quarantine "$APP_PATH" 2>/dev/null || true
+
+    EXEC_PATH="$APP_PATH/Contents/MacOS/AudioLog"
+    [ -f "$EXEC_PATH" ] || EXEC_PATH="$APP_PATH/Contents/MacOS/audiolog"
+    PROGRAM_ARGS="<string>${EXEC_PATH}</string>"
+    WORK_DIR="$HOME"
+
+    VERSION="$(defaults read "$APP_PATH/Contents/Info.plist" \
+        CFBundleShortVersionString 2>/dev/null || echo "?")"
+    echo "Installed version: $VERSION"
+    codesign -dv --verbose=2 "$APP_PATH" 2>&1 \
+        | grep -E "^(Authority|TeamIdentifier)" | head -2 || true
 else
     VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
     if [ ! -f "$VENV_PYTHON" ]; then
-        echo "ERROR: Neither AudioLog.app nor .venv found. Run setup.sh first."
+        echo "ERROR: no dist/AudioLog.app and no .venv."
+        echo "       Run 'bash build.sh' (or 'bash setup.sh') first."
         exit 1
     fi
+    echo "No build found — running from source via venv (no auto-update)."
     PROGRAM_ARGS="<string>${VENV_PYTHON}</string>
         <string>${SCRIPT_DIR}/run.py</string>"
-    APP_EXEC="$VENV_PYTHON"
-    echo "Using venv python (AudioLog.app not found)"
+    EXEC_PATH="$VENV_PYTHON"
+    WORK_DIR="$SCRIPT_DIR"
 fi
 
-# Check venv exists
-if [ ! -f "$SCRIPT_DIR/.venv/bin/python" ]; then
-    echo "ERROR: venv not found. Run setup.sh first."
-    exit 1
-fi
-
-# Create log directory
 mkdir -p "$LOG_DIR"
 
-# Generate plist
+# ── LaunchAgent ─────────────────────────────────────────────────────────────
 cat > "$PLIST_SRC" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -51,7 +75,7 @@ cat > "$PLIST_SRC" <<EOF
     </array>
 
     <key>WorkingDirectory</key>
-    <string>${SCRIPT_DIR}</string>
+    <string>${WORK_DIR}</string>
 
     <key>RunAtLoad</key>
     <true/>
@@ -74,23 +98,19 @@ cat > "$PLIST_SRC" <<EOF
 </plist>
 EOF
 
-# Unload if already loaded
-launchctl bootout "gui/$(id -u)/${PLIST_NAME}" 2>/dev/null || true
-
-# Copy and load
 cp "$PLIST_SRC" "$PLIST_DST"
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
 
 echo ""
 echo "=== Installed ==="
-echo "Dictation is now running and will auto-start on login."
-echo "Menu bar: look for 🎙 icon"
+echo "App:  $EXEC_PATH"
 echo "Logs: $LOG_DIR/"
+echo "Auto-start on login: yes. Menu bar: look for the 🎙 icon."
+echo ""
+echo "IMPORTANT — macOS ties permissions to the signature and path, so after"
+echo "this first install you must approve the app once:"
+echo "  System Settings → Privacy & Security → Accessibility  → allow AudioLog"
+echo "  System Settings → Privacy & Security → Microphone     → allow AudioLog"
+echo "Signed updates keep those approvals — you only do this once."
 echo ""
 echo "To uninstall:  bash uninstall.sh"
-echo ""
-echo "IMPORTANT (one-time setup):"
-echo "  System Settings → Privacy & Security → Accessibility"
-echo "    → add: $APP_EXEC"
-echo "  System Settings → Privacy & Security → Microphone"
-echo "    → allow for the same app"

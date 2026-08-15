@@ -69,17 +69,22 @@ Choose [1/2, default=1]:
 ### 3. Установить как сервис
 
 ```bash
-bash install.sh
+bash build.sh       # собрать и подписать AudioLog.app
+bash install.sh     # поставить в /Applications + LaunchAgent
 ```
 
-Ставит LaunchAgent — приложение будет запускаться автоматически при логине.
+Приложение живёт в `/Applications/AudioLog.app` (не в папке проекта — авто-обновление
+подменяет весь бандл). LaunchAgent запускает его при логине.
 
 ### 4. Выдать разрешения (один раз)
 
 В **System Settings → Privacy & Security**:
 
-1. **Accessibility** → добавить приложение (install.sh покажет путь). Нужно для: хоткей + вставка текста
+1. **Accessibility** → добавить `/Applications/AudioLog.app`. Нужно для: хоткей + вставка текста
 2. **Microphone** → появится автоматически при первой записи → нажать Allow
+
+Разрешения привязаны к подписи Developer ID, поэтому обновления их не сбрасывают —
+это делается один раз.
 
 ## Использование
 
@@ -139,6 +144,48 @@ python run.py --no-menubar  # только терминал
 
 После изменения — перезапустить: `bash install.sh`
 
+## Обновления
+
+Установленное приложение обновляется само. Раз в 4 часа (и через 90 секунд после
+запуска) оно читает фид последнего релиза на GitHub:
+
+```
+https://github.com/Juli374/audio-log-project/releases/latest/download/appcast.json
+```
+
+Если версия в фиде выше — скачивает архив, проверяет его тремя способами
+(sha256 из фида · подпись Developer ID + Team ID · Gatekeeper, то есть нотаризация),
+складывает рядом с данными приложения и подменяет бандл, когда ничего не пишется и
+не расшифровывается. Приложение перезапускается само через launchd; переустановка
+не нужна. Настройки и история лежат в `~/Library/Application Support/audio-log`
+и обновлением не затрагиваются.
+
+Вручную: меню в menu bar → **🔄 Проверить обновления**.
+Выключить: `"auto_update": false` в `settings.json` (или `AUDIOLOG_NO_UPDATE=1`).
+Лог обновлений: `~/Library/Logs/audio-log/update.log`.
+
+### Выпустить новую версию
+
+Один раз на машине — сохранить пароль для нотаризации (app-specific password
+с appleid.apple.com):
+
+```bash
+xcrun notarytool store-credentials AudioLog --apple-id "you@example.com" --team-id BHZHRHKZY4
+```
+
+Дальше на каждый релиз:
+
+```bash
+bash release.sh 1.3.1
+```
+
+Скрипт сам: поднимает `VERSION` → собирает → подписывает Developer ID →
+нотаризует у Apple и клеит тикет → пакует zip → пишет `appcast.json` →
+коммитит, ставит тег, пушит → создаёт GitHub Release с обоими файлами.
+Установленные копии подхватят обновление в течение 4 часов.
+
+Прогнать всё, кроме публикации: `bash release.sh 1.3.1 --dry-run`.
+
 ## Структура проекта
 
 | Файл | Назначение |
@@ -156,6 +203,11 @@ python run.py --no-menubar  # только терминал
 | `history_ui.py` | Окно истории (WKWebView) |
 | `db.py` | SQLite: история, заметки |
 | `ui/index.html` | Фронтенд истории |
+| `version.py` | Версия приложения (из VERSION / Info.plist) |
+| `updater.py` | Авто-обновление: фид, проверки, подмена бандла |
 | `setup.sh` | Установка: venv + зависимости + модель + PasteHelper |
-| `install.sh` | LaunchAgent (автозапуск при логине) |
-| `uninstall.sh` | Удаление сервиса |
+| `build.sh` | Сборка py2app + подпись Developer ID + нотаризация |
+| `install.sh` | Установка в /Applications + LaunchAgent |
+| `release.sh` | Выпуск версии: сборка, нотаризация, GitHub Release |
+| `entitlements.plist` | Разрешения hardened runtime (микрофон, JIT, библиотеки) |
+| `uninstall.sh` | Удаление сервиса (`--app` — и самого приложения) |

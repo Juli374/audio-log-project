@@ -114,20 +114,23 @@ class HotkeyListener:
     """
 
     def __init__(self, config, on_activate, on_deactivate, on_cancel=None,
-                 on_long_toggle=None):
+                 on_long_toggle=None, on_translate_toggle=None):
         self._config = config
         self._on_activate = on_activate
         self._on_deactivate = on_deactivate
         self._on_cancel = on_cancel
         self._on_long_toggle = on_long_toggle
+        self._on_translate_toggle = on_translate_toggle
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
         self._long_keycode = getattr(config, "session_hotkey_keycode", None)
         self._long_require_double_tap = getattr(
             config, "session_hotkey_require_double_tap", True)
+        self._translate_keycode = getattr(config, "translate_hotkey_keycode", None)
         self._pressed = False
         self._recording = False  # for toggle mode
         self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
         self._last_long_tap = 0.0    # for double-tap detection on long key
+        self._last_translate_tap = 0.0  # double-tap detection on translate key
         self._global_monitor = None
         self._local_monitor = None
         self._poll_timer: threading.Timer | None = None
@@ -208,6 +211,32 @@ class HotkeyListener:
               and self._on_long_toggle is not None):
             is_pressed = bool(flags & flag_for_keycode(self._long_keycode))
             self._handle_long(is_pressed)
+        elif (self._translate_keycode is not None
+              and kc == self._translate_keycode
+              and self._on_translate_toggle is not None):
+            is_pressed = bool(flags & flag_for_keycode(self._translate_keycode))
+            self._handle_translate(is_pressed)
+
+    def _handle_translate(self, is_pressed):
+        """Translate key: always double-tap.
+
+        The translate key is a plain modifier the user also types with
+        (⌘C, ⌘V and friends), so a single press must never fire — only two
+        presses inside the double-tap window count.
+        """
+        if not is_pressed:
+            return
+
+        now = time.monotonic()
+        if now - self._last_translate_tap < _LONG_DOUBLE_TAP_WINDOW:
+            log.info("Translate hotkey: double-tap detected")
+            self._last_translate_tap = 0.0
+            try:
+                AppHelper.callAfter(self._on_translate_toggle)
+            except Exception:
+                log.exception("Error in on_translate_toggle")
+        else:
+            self._last_translate_tap = now
 
     def _handle_long(self, is_pressed):
         """Left Option handler for long-session toggle.
@@ -363,6 +392,15 @@ class HotkeyListener:
         log.info("Long hotkey: keycode %s → %d", self._long_keycode, keycode)
         self._long_keycode = keycode
         self._last_long_tap = 0.0
+
+    def set_translate_keycode(self, keycode: int) -> None:
+        """Live-update the translate hotkey."""
+        if keycode == self._translate_keycode:
+            return
+        log.info("Translate hotkey: keycode %s → %d",
+                 self._translate_keycode, keycode)
+        self._translate_keycode = keycode
+        self._last_translate_tap = 0.0
 
     def stop(self):
         self._cancel_polling()

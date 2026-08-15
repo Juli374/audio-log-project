@@ -1,6 +1,12 @@
 """py2app build configuration for AudioLog."""
 
+from pathlib import Path
+
 from setuptools import setup
+
+# VERSION is the single source of truth — Info.plist and the runtime
+# version check (version.py) both read from it.
+VERSION = (Path(__file__).parent / "VERSION").read_text().strip()
 
 APP = ['run.py']
 
@@ -9,6 +15,7 @@ OPTIONS = {
     'packages': [
         'rumps',
         'sounddevice',
+        '_sounddevice_data',
         'numpy',
         'pywhispercpp',
         'objc',
@@ -32,14 +39,17 @@ OPTIONS = {
         'db',
         'feedback',
         'utils',
+        'version',
+        'updater',
     ],
     'plist': {
         'CFBundleIdentifier': 'com.audiolog.app',
         'CFBundleName': 'AudioLog',
         'CFBundleDisplayName': 'AudioLog',
-        'CFBundleVersion': '1.2.1',
-        'CFBundleShortVersionString': '1.2.1',
+        'CFBundleVersion': VERSION,
+        'CFBundleShortVersionString': VERSION,
         'LSUIElement': False,  # Show in Dock (app sets policy at runtime)
+        'LSMinimumSystemVersion': '13.0',
         'NSMicrophoneUsageDescription': 'AudioLog needs microphone access for voice dictation.',
         'NSAppleEventsUsageDescription': 'AudioLog needs accessibility for text insertion.',
     },
@@ -52,7 +62,7 @@ OPTIONS = {
 
 setup(
     name='AudioLog',
-    version='1.2.1',
+    version=VERSION,
     app=APP,
     options={'py2app': OPTIONS},
     setup_requires=['py2app'],

@@ -234,7 +234,7 @@ class LongTranscriberIntegrationTests(unittest.TestCase):
                     self.calls = 0
                     self.lock = threading.Lock()
 
-                def transcribe(self, audio):
+                def transcribe(self, audio, apply_cleanup=True):
                     with self.lock:
                         self.calls += 1
                         n = self.calls
@@ -275,7 +275,7 @@ class LongTranscriberIntegrationTests(unittest.TestCase):
                     super().__init__(cfg)
                     self.calls = 0
 
-                def transcribe(self, audio):
+                def transcribe(self, audio, apply_cleanup=True):
                     self.calls += 1
                     if self.calls < 3:
                         raise urllib.error.URLError("simulated network")
@@ -307,7 +307,7 @@ class LongTranscriberIntegrationTests(unittest.TestCase):
             config = Config()
 
             class AlwaysFailBase(BaseTranscriber):
-                def transcribe(self, audio):
+                def transcribe(self, audio, apply_cleanup=True):
                     raise urllib.error.URLError("persistent failure")
 
             base = AlwaysFailBase(config)

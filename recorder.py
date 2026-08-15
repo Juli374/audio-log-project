@@ -186,6 +186,8 @@ class Recorder:
             samplerate=self._config.sample_rate,
             channels=self._config.channels,
             dtype=self._config.dtype,
+            blocksize=getattr(self._config, "blocksize", 1600),
+            latency="high",
             callback=self._callback,
             finished_callback=self._on_stream_finished,
         )
@@ -277,6 +279,18 @@ class Recorder:
         log.info("Recorded %.1fs (%d samples) | RMS=%.4f peak=%.4f %s",
                  duration, len(audio), rms, peak,
                  "⚠️ VERY QUIET" if peak < 0.01 else "OK")
+
+        # Dropped audio is silent and deadly: Whisper still returns text, it
+        # is just text for speech with holes in it. Compare captured length
+        # against the clock so a regression shows up in the log instead of
+        # as mysteriously bad transcripts.
+        if self.recording_start_time:
+            wall = time.monotonic() - self.recording_start_time
+            if wall > 1.0 and duration < wall * 0.9:
+                log.warning(
+                    "Audio loss: captured %.1fs of %.1fs elapsed (%.0f%%) — "
+                    "callbacks are being starved",
+                    duration, wall, 100.0 * duration / wall)
 
         self.last_duration = duration
         self.last_rms = rms

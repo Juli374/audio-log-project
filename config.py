@@ -16,6 +16,13 @@ class Config:
     sample_rate: int = 16000
     channels: int = 1
     dtype: str = "float32"
+    # Frames per callback. Left at 0 (PortAudio's choice) CoreAudio hands us
+    # ~15-sample buffers — over a thousand Python callbacks per second, each
+    # needing the GIL. Whenever the main thread is busy (transcribing, UI,
+    # an API call) those callbacks are late and audio is dropped: measured
+    # ~30% loss, i.e. 300s of speech arriving as 213s. A 100 ms block cuts
+    # the callback rate ~100x and the loss with it.
+    blocksize: int = 1600
 
     # Hotkey (Right Option / Right Alt)
     hotkey_keycode: int = 61  # macOS virtual keycode for Right Option
@@ -84,14 +91,39 @@ class Config:
     session_auto_delete_audio: bool = False     # keep WAV after transcription
     session_translate: bool = False             # v1: no translation for sessions
 
+    # ── Instant translation popup ──
+    # Select text in any app, double-tap the translate key, and the
+    # translation appears centred on screen (see translate_popup.py).
+    # Always a double-tap: a single press of a bare modifier happens
+    # constantly during normal typing.
+    # Right Control is the default because it is the one modifier most
+    # people never press — Right ⌘ would fire on two quick ⌘C copies.
+    translate_enabled: bool = True
+    translate_hotkey_keycode: int = 62          # Right Control
+    translate_target: str = "ru"                # language to translate into
+
+    # ── Auto-update ──
+    # Only active in an installed .app bundle (see updater.py). auto_update
+    # controls checking/downloading; auto_update_silent controls whether the
+    # verified update is applied on its own (app restarts while idle) or waits
+    # for the menu item.
+    auto_update: bool = True
+    auto_update_silent: bool = True
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 
     def __post_init__(self):
         if not self.model_dir:
-            from utils import resource_path
-            self.model_dir = str(resource_path() / "models")
+            import sys
+            if getattr(sys, "frozen", False):
+                # Never inside the .app bundle: an auto-update replaces the
+                # whole bundle and would delete a downloaded model with it.
+                self.model_dir = str(Path(self.data_dir) / "models")
+            else:
+                from utils import resource_path
+                self.model_dir = str(resource_path() / "models")
 
     @property
     def data_dir(self) -> str:
@@ -151,6 +183,11 @@ class Config:
             "session_parallel_workers": self.session_parallel_workers,
             "session_max_hours": self.session_max_hours,
             "session_auto_delete_audio": self.session_auto_delete_audio,
+            "translate_enabled": self.translate_enabled,
+            "translate_hotkey_keycode": self.translate_hotkey_keycode,
+            "translate_target": self.translate_target,
+            "auto_update": self.auto_update,
+            "auto_update_silent": self.auto_update_silent,
         }
 
     def apply_settings(self, settings: dict) -> None:
@@ -203,11 +240,29 @@ class Config:
             self.session_max_hours = int(settings["session_max_hours"])
         if "session_auto_delete_audio" in settings:
             self.session_auto_delete_audio = bool(settings["session_auto_delete_audio"])
+        if "translate_enabled" in settings:
+            self.translate_enabled = bool(settings["translate_enabled"])
+        if "translate_hotkey_keycode" in settings:
+            self.translate_hotkey_keycode = int(settings["translate_hotkey_keycode"])
+        if "translate_target" in settings:
+            self.translate_target = str(settings["translate_target"])
+        if "auto_update" in settings:
+            self.auto_update = bool(settings["auto_update"])
+        if "auto_update_silent" in settings:
+            self.auto_update_silent = bool(settings["auto_update_silent"])
         # model_name is not applied here — requires model reload on restart
 
     def save_settings(self, settings: dict) -> None:
-        """Save persistent settings to JSON file and apply to Config."""
+        """Save persistent settings to JSON file and apply to Config.
+
+        Merges over what's already stored: callers (the settings UI) only
+        send the fields they render, and a plain overwrite would silently
+        drop everything else (session_*, auto_update_silent,
+        anthropic_model, …) back to defaults on every save.
+        """
         self.apply_settings(settings)
         self.ensure_data_dir()
+        merged = self.load_settings()
+        merged.update(settings)
         with open(self.settings_path, "w") as f:
-            json.dump(settings, f, ensure_ascii=False, indent=2)
+            json.dump(merged, f, ensure_ascii=False, indent=2)

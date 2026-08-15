@@ -19,15 +19,29 @@ from overlay import Overlay
 from recorder import Recorder
 from session_recorder import SessionRecorder, SessionRecording
 from transcriber import create_transcriber
+from translate_popup import TranslateController
+from updater import Updater
 from utils import get_logger, setup_logging
 
 log = get_logger(__name__)
 
-ICON_IDLE = "🎙"
-ICON_RECORDING = "🔴"
-ICON_TRANSCRIBING = "⏳"
-ICON_SESSION_RECORDING = "📼"
-ICON_SESSION_PROCESSING = "⚙️"
+# macOS remembers the menu bar icon position under this name, so the icon
+# stays where the user ⌘-dragged it across restarts and auto-updates.
+STATUS_ITEM_AUTOSAVE = "AudioLogStatusItem"
+
+# Menu bar states. Each name maps to assets/menubar/<name>.png — a template
+# image (black + alpha), so macOS tints it for the light or dark menu bar.
+# Redraw them with tools/make-icons.py.
+ICON_IDLE = "idle"
+ICON_RECORDING = "recording"
+ICON_TRANSCRIBING = "processing"
+ICON_SESSION_RECORDING = "session"
+ICON_SESSION_PROCESSING = "processing"
+
+
+def _icon_file(state: str) -> str:
+    from utils import resource_path
+    return str(resource_path() / "assets" / "menubar" / f"{state}.png")
 
 
 def _format_duration(seconds: float) -> str:
@@ -256,16 +270,17 @@ class SessionController:
                 return
             if self._state == "recording":
                 elapsed = time.monotonic() - self._start_time
-                self._menubar.title = (
-                    f"{ICON_SESSION_RECORDING} {_format_duration(elapsed)}")
+                # Icon shows the state, the title carries the running clock.
+                self._menubar.set_icon(ICON_SESSION_RECORDING,
+                                       _format_duration(elapsed))
                 if self._menubar._session_menu is not None:
                     self._menubar._session_menu.title = "⏹ Остановить сессию"
             elif self._state == "transcribing":
-                self._menubar.title = ICON_SESSION_PROCESSING
+                self._menubar.set_icon(ICON_SESSION_PROCESSING)
                 if self._menubar._session_menu is not None:
                     self._menubar._session_menu.title = "⚙️ Обработка сессии…"
             else:
-                self._menubar.title = ICON_IDLE
+                self._menubar.set_icon(ICON_IDLE)
                 if self._menubar._session_menu is not None:
                     self._menubar._session_menu.title = "📼 Начать сессию"
         AppHelper.callAfter(_do)
@@ -308,7 +323,8 @@ class SessionController:
 
 class MenuBarApp(rumps.App):
     def __init__(self, config: Config) -> None:
-        super().__init__(ICON_IDLE, quit_button=None)
+        super().__init__("AudioLog", title="", icon=_icon_file(ICON_IDLE),
+                         template=True, quit_button=None)
         self._config = config
         setup_logging(config)
 
@@ -320,6 +336,7 @@ class MenuBarApp(rumps.App):
         self._recorder = Recorder(config)
         self._transcriber = create_transcriber(config)
         self._overlay = Overlay()
+        self._translator = TranslateController(config)
         self._history_window = HistoryWindow(config)
         self._history_window._recorder = self._recorder
         self._history_window._transcriber = self._transcriber
@@ -331,7 +348,6 @@ class MenuBarApp(rumps.App):
         self._ready = False
 
         db.init_db()
-        db.init_notes_table()
         db.init_sessions_table()
 
         self._hotkey: HotkeyListener | None = None
@@ -354,6 +370,7 @@ class MenuBarApp(rumps.App):
             "📼 Начать сессию", callback=self._toggle_session)
         self._session_cancel_menu = rumps.MenuItem(
             "✕ Отменить сессию", callback=self._cancel_session)
+        self._updater: Updater | None = None
         self.menu = [
             self._status_item,
             None,
@@ -364,17 +381,32 @@ class MenuBarApp(rumps.App):
             self._session_menu,
             self._session_cancel_menu,
             None,
+            rumps.MenuItem("🌐 Перевести выделенное",
+                           callback=self._translate_menu),
+            None,
             rumps.MenuItem("📋 История", callback=self._show_history),
             None,
             rumps.MenuItem("Выход", callback=self._quit),
         ]
+
+    def set_icon(self, state: str, title: str = "") -> None:
+        """Swap the menu bar image, plus optional text beside it.
+
+        rumps keeps template mode across icon changes, so the glyph stays
+        tinted by the system for the current menu bar appearance.
+        """
+        try:
+            self.icon = _icon_file(state)
+        except Exception:
+            log.exception("could not set menu bar icon %r", state)
+        self.title = title
 
     def _set_state(self, icon: str, status: str,
                    overlay_text: str | None = None,
                    overlay_state: str = "record") -> None:
         """Thread-safe UI update — dispatches to main thread."""
         def _update():
-            self.title = icon
+            self.set_icon(icon)
             self._status_item.title = status
             if overlay_text:
                 self._overlay.show(overlay_text, state=overlay_state)
@@ -404,7 +436,7 @@ class MenuBarApp(rumps.App):
         self._is_recording = True
         self._cancel_auto_hide()  # prevent previous timer from hiding new overlay
         self._feedback.on_record_start()
-        self.title = ICON_RECORDING
+        self.set_icon(ICON_RECORDING)
         tgt = (self._config.target_language or "").lower()
         if tgt == "en":
             rec_label = "Запись… → EN"
@@ -474,7 +506,7 @@ class MenuBarApp(rumps.App):
 
         # UI updates — best effort via main thread
         def _update_ui():
-            self.title = ICON_IDLE
+            self.set_icon(ICON_IDLE)
             self._status_item.title = "⚠️ Запись остановлена (таймаут)"
             self._overlay.show("Таймаут!", state="error")
             self._auto_hide_overlay()
@@ -513,7 +545,7 @@ class MenuBarApp(rumps.App):
             self._hotkey.reset_toggle()
         self._feedback.on_record_stop()
 
-        self.title = ICON_TRANSCRIBING
+        self.set_icon(ICON_TRANSCRIBING)
         self._status_item.title = "⏳ Обработка…"
         self._overlay.show("Обработка…", state="process")
 
@@ -617,6 +649,44 @@ class MenuBarApp(rumps.App):
                 self._session._long_transcriber)
             log.info("SessionController ready (hotkey: Left Option double-tap)")
 
+    def _rebuild_transcriber(self) -> None:
+        """Rebuild the transcriber after the mode changed in Settings.
+
+        Called from the settings handler on the main thread; the actual
+        model load happens on a worker because the local backend takes
+        seconds. Skipped mid-recording — swapping the engine underneath an
+        in-flight transcription would lose it.
+        """
+        if self._is_recording or self._is_processing:
+            log.warning("Mode changed while busy — new mode applies after "
+                        "the current recording")
+            return
+
+        def _worker():
+            try:
+                new = create_transcriber(self._config)
+                if self._config.transcription_mode == "local":
+                    self._config.ensure_model_dir()
+                new.load_model()
+            except Exception:
+                log.exception("Could not build transcriber for mode %s",
+                              self._config.transcription_mode)
+                return
+
+            self._transcriber = new
+            self._history_window._transcriber = new
+            # The session pipeline wraps the same base transcriber.
+            if self._session is not None:
+                try:
+                    self._session._long_transcriber._base = new
+                except Exception:
+                    log.exception("Could not repoint session transcriber")
+            log.info("Transcriber rebuilt: mode=%s",
+                     self._config.transcription_mode)
+
+        threading.Thread(target=_worker, daemon=True,
+                         name="transcriber-rebuild").start()
+
     def _update_lang_checks(self) -> None:
         tgt = (self._config.target_language or "").lower()
         self._lang_ru.state = tgt == ""
@@ -658,6 +728,22 @@ class MenuBarApp(rumps.App):
             return
         self._session.toggle()
 
+    def _fire_translate(self) -> None:
+        """Translate hotkey and menu item both land here. Main thread only.
+
+        Independent of the transcriber — translation works while the speech
+        model is still loading.
+        """
+        if not getattr(self._config, "translate_enabled", True):
+            return
+        try:
+            self._translator.toggle()
+        except Exception:
+            log.exception("translate popup failed")
+
+    def _translate_menu(self, _) -> None:
+        self._fire_translate()
+
     def _cancel_session(self, _) -> None:
         if self._session is None:
             return
@@ -670,9 +756,113 @@ class MenuBarApp(rumps.App):
     def _show_history(self, _) -> None:
         self._history_window.show()
 
+    # ── auto-update ──
+
+    def _busy_for_update(self) -> bool:
+        """True while anything would be lost by restarting."""
+        if self._is_recording or self._is_processing:
+            return True
+        if self._session is not None and self._session.is_busy:
+            return True
+        if self._history_window._voice_recording:
+            return True
+        return False
+
+    def _check_accessibility(self) -> None:
+        """Ask macOS for Accessibility at startup if we don't have it yet.
+
+        Without it CGEventPost is dropped silently and auto-paste does nothing.
+        The system prompt is also what puts AudioLog into the Accessibility
+        list in the first place — until it fires, there is no switch to flip.
+        """
+        time.sleep(6)
+        from output import is_trusted, request_accessibility
+        if is_trusted():
+            log.info("Accessibility: granted — auto-paste is available")
+            return
+        log.warning("Accessibility: not granted — showing the system prompt")
+        request_accessibility(prompt=True)
+
+    def _setup_status_item(self) -> None:
+        """Give the menu bar icon a remembered position, and check it is visible.
+
+        Without an autosave name macOS re-inserts the icon at the leftmost slot
+        on every launch — and this app relaunches itself on every update. On a
+        notched Mac with a busy menu bar, "leftmost" lands *under the notch*,
+        where the icon is invisible and unclickable even though macOS reports
+        it as visible. With the name set, macOS remembers where the user
+        dragged it (⌘-drag) and puts it back there after every restart.
+        """
+        time.sleep(4)
+
+        def _do():
+            try:
+                item = getattr(self._nsapp, "nsstatusitem", None)
+                if item is None:
+                    log.warning("menubar icon: NSStatusItem was never created")
+                    return
+
+                button = item.button() if hasattr(item, "button") else None
+                frame = None
+                if button is not None and button.window() is not None:
+                    frame = button.window().frame()
+                if frame is None:
+                    log.info("menubar icon: no frame yet")
+                    return
+
+                left, right = frame.origin.x, frame.origin.x + frame.size.width
+                log.info("menubar icon: x=%.0f..%.0f title=%r",
+                         left, right, self.title)
+
+                screen = AppKit.NSScreen.mainScreen()
+                if not hasattr(screen, "auxiliaryTopLeftArea"):
+                    return
+                notch_start = screen.auxiliaryTopLeftArea().size.width
+                notch_end = screen.auxiliaryTopRightArea().origin.x
+                if notch_end > notch_start and left < notch_end and right > notch_start:
+                    log.warning(
+                        "menubar icon is hidden behind the notch (icon %.0f..%.0f, "
+                        "notch %.0f..%.0f) — menu bar is full. Free a slot or "
+                        "⌘-drag icons to move it out.",
+                        left, right, notch_start, notch_end)
+            except Exception:
+                log.exception("menubar icon setup failed")
+        AppHelper.callAfter(_do)
+
+    def _install_update(self, _=None) -> None:
+        """Hand the bundle swap to the helper and quit so it can proceed.
+
+        Called from the Settings tab («Установить и перезапустить») and by the
+        updater itself once the app has been idle long enough.
+        """
+        if self._updater is None or not self._updater.staged_version:
+            return
+        self._overlay.show("Устанавливаю обновление…", state="process")
+        if not self._updater.apply_now():
+            self._overlay.show("Не удалось установить обновление", state="error")
+            self._auto_hide_overlay(delay=3.0)
+            return
+        if self._hotkey:
+            self._hotkey.stop()
+        rumps.quit_application()
+
+    def _on_update_staged(self, new_version: str) -> None:
+        """Called from the updater thread once a build is verified + staged."""
+        log.info("update %s staged and verified", new_version)
+
+    def _on_update_apply(self) -> None:
+        """Called from the updater thread when it decides to restart silently."""
+        def _do():
+            if self._busy_for_update():
+                return
+            self._install_update(None)
+        AppHelper.callAfter(_do)
+
     def _quit(self, _) -> None:
         if self._hotkey:
             self._hotkey.stop()
+        if self._updater:
+            self._updater.stop()
         rumps.quit_application()
 
     def run(self, **kwargs) -> None:
@@ -705,12 +895,31 @@ class MenuBarApp(rumps.App):
             applicationShouldHandleReopen_hasVisibleWindows_
         )
 
+        # Name the status item the moment rumps creates it. macOS only honours
+        # a remembered menu bar position if the autosave name is set while the
+        # item is being placed — set it later and the icon goes wherever the
+        # system wants, which on a full notched menu bar means behind the notch.
+        _orig_did_finish = RumpsDelegate.applicationDidFinishLaunching_
+
+        def applicationDidFinishLaunching_(_self, notification):
+            _orig_did_finish(_self, notification)
+            try:
+                item = getattr(_self, "nsstatusitem", None)
+                if item is not None and hasattr(item, "setAutosaveName_"):
+                    item.setAutosaveName_(STATUS_ITEM_AUTOSAVE)
+            except Exception:
+                log.exception("could not set status item autosave name")
+        RumpsDelegate.applicationDidFinishLaunching_ = (
+            applicationDidFinishLaunching_
+        )
+
         self._hotkey = HotkeyListener(
             config=self._config,
             on_activate=self._on_activate,
             on_deactivate=self._on_deactivate,
             on_cancel=self._on_cancel,
             on_long_toggle=self._fire_session_toggle,
+            on_translate_toggle=self._fire_translate,
         )
         self._hotkey.start()
         # History window's settings tab needs to live-apply hotkey changes
@@ -718,6 +927,22 @@ class MenuBarApp(rumps.App):
 
         t = threading.Thread(target=self._load_model, daemon=True)
         t.start()
+
+        # Auto-update: no-op when running from source (see updater.py).
+        # The UI for it lives in the History window's Settings tab.
+        self._updater = Updater(
+            config=self._config,
+            is_busy=self._busy_for_update,
+            on_staged=self._on_update_staged,
+            on_apply=self._on_update_apply,
+        )
+        self._history_window._updater = self._updater
+        self._history_window._install_update_cb = self._install_update
+        self._history_window._rebuild_transcriber_cb = self._rebuild_transcriber
+        self._updater.start()
+
+        threading.Thread(target=self._setup_status_item, daemon=True).start()
+        threading.Thread(target=self._check_accessibility, daemon=True).start()
 
         # Show history window as the main window on launch
         self._history_window.show()

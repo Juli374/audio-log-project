@@ -9,3 +9,5 @@ PasteHelper.app/
 build/
 dist/
 *.egg-info/
+# wrangler drops the Cloudflare account id here — this repo is public
+.wrangler/
