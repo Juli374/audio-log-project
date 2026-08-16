@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from AppKit import (
@@ -92,7 +93,11 @@ _MODIFIERS_HELD_MASK = (
     (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20)  # shift, ctrl, option, cmd
 )
 _MODIFIER_RELEASE_TIMEOUT = 1.2
-_MODIFIER_POLL_INTERVAL = 0.015
+_MODIFIER_POLL_INTERVAL = 0.008
+# Settle time after the last modifier comes up, so the key-up has reached
+# the focused app before we synthesize ⌘C. Kept as small as is safe: this
+# sits directly in the path between the keystroke and the visible result.
+_MODIFIER_SETTLE = 0.02
 
 # Chunking for long selections. Claude handles a few thousand characters in
 # one call comfortably; beyond that we split so nothing is silently dropped.
@@ -140,7 +145,7 @@ def _wait_for_modifier_release() -> float:
         flags = CGEventSourceFlagsState(kCGEventSourceStateHIDSystemState)
         if not (flags & _MODIFIERS_HELD_MASK):
             # Small settle so the key-up has propagated to the focused app.
-            time.sleep(0.05)
+            time.sleep(_MODIFIER_SETTLE)
             return time.monotonic() - start
         time.sleep(_MODIFIER_POLL_INTERVAL)
     log.warning("Modifiers still held after %.1fs — copying anyway",
@@ -267,6 +272,32 @@ def _document_prompt(target: str) -> str:
     )
 
 
+# Re-translating the same passage is common — you look at it, dismiss the
+# panel, look again. Keeping the last few results makes the repeat instant
+# instead of another round trip.
+_CACHE_LIMIT = 24
+_cache: "OrderedDict[tuple, str]" = OrderedDict()
+_cache_lock = threading.Lock()
+
+
+def _cache_get(text: str, target: str, model: str) -> str | None:
+    key = (text, target, model)
+    with _cache_lock:
+        value = _cache.get(key)
+        if value is not None:
+            _cache.move_to_end(key)
+        return value
+
+
+def _cache_put(text: str, target: str, model: str, result: str) -> None:
+    if not result:
+        return
+    with _cache_lock:
+        _cache[(text, target, model)] = result
+        while len(_cache) > _CACHE_LIMIT:
+            _cache.popitem(last=False)
+
+
 def _build_request(text: str, target: str, config, stream: bool):
     api_key = config.anthropic_api_key
     if not api_key:
@@ -277,7 +308,13 @@ def _build_request(text: str, target: str, config, stream: bool):
         # Generous ceiling: Russian runs longer than English, and a
         # truncated translation is worse than a slow one.
         "max_tokens": 8192,
-        "system": _document_prompt(target),
+        # The instructions are identical on every call, so cache them —
+        # the model skips re-reading them and starts answering sooner.
+        "system": [{
+            "type": "text",
+            "text": _document_prompt(target),
+            "cache_control": {"type": "ephemeral"},
+        }],
         "messages": [{"role": "user", "content": text}],
     }
     if stream:
@@ -365,14 +402,22 @@ def translate_text(text: str, target: str, config, on_partial=None) -> str:
     A selection that fits one call is streamed, so text appears while it is
     still being produced. Longer documents are split and the pieces run
     concurrently — sequential chunks were the reason a long page took ages.
+    Repeats of a passage already translated come straight from memory.
     """
     parts = _split_for_translation(text)
     t0 = time.monotonic()
+    model = getattr(config, "translate_model", _DEFAULT_MODEL)
+
+    cached = _cache_get(text, target, model)
+    if cached is not None:
+        log.info("Translate: %d chars from cache", len(text))
+        return cached
 
     if len(parts) == 1 and on_partial is not None:
         out = _translate_streaming(text, target, config, on_partial)
         log.info("Translate: %d chars in %.1fs (streamed)",
                  len(text), time.monotonic() - t0)
+        _cache_put(text, target, model, out)
         return out
 
     log.info("Translate: %d chars → %d chunks", len(text), len(parts))
@@ -381,7 +426,9 @@ def translate_text(text: str, target: str, config, on_partial=None) -> str:
             lambda p: _translate_chunk(p, target, config), parts))
     log.info("Translate: %d chars in %.1fs (%d chunks)",
              len(text), time.monotonic() - t0, len(parts))
-    return "\n\n".join(out)
+    joined = "\n\n".join(out)
+    _cache_put(text, target, model, joined)
+    return joined
 
 
 # ── Panel ──
