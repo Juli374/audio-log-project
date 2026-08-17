@@ -425,6 +425,31 @@ class MenuBarApp(rumps.App):
             return
         log.warning("Accessibility: not granted — showing the system prompt")
         request_accessibility(prompt=True)
+        self._warn_if_translate_dead()
+
+    def _warn_if_translate_dead(self) -> None:
+        """Say out loud when the translate shortcut failed to arm.
+
+        Otherwise the failure is completely silent: the shortcut simply does
+        nothing, with no window, no sound and no hint about the missing
+        permission — which is exactly how it looks on a fresh machine.
+        """
+        time.sleep(4)
+        if self._hotkey is None or self._hotkey.translate_ready:
+            return
+
+        log.error("Translate shortcut is not armed — Accessibility missing")
+
+        def _show():
+            self._translator._popup.show(
+                "Перевод по сочетанию клавиш не работает.\n\n"
+                "macOS не дала приложению читать нажатия клавиш. Открой "
+                "Системные настройки → Конфиденциальность и безопасность → "
+                "Универсальный доступ и включи AudioLog — сочетание заработает "
+                "само, перезапуск не нужен.\n\n"
+                "Подробности: окно AudioLog → ⚙ → Диагностика."
+            )
+        AppHelper.callAfter(_show)
 
     def _setup_status_item(self) -> None:
         """Give the menu bar icon a remembered position, and check it is visible.

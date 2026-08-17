@@ -225,6 +225,47 @@ class HistoryWindow:
             self._send_response({"action": "permissions",
                                  "accessibility": is_trusted()})
 
+        elif action == "get_diagnostics":
+            import diagnostics
+            self._send_response({
+                "action": "diagnostics",
+                "data": diagnostics.collect(
+                    self._config,
+                    hotkey_listener=self._hotkey_listener,
+                    transcriber=self._transcriber),
+            })
+
+        elif action == "copy_diagnostics":
+            import diagnostics
+            report = diagnostics.as_text(diagnostics.collect(
+                self._config,
+                hotkey_listener=self._hotkey_listener,
+                transcriber=self._transcriber))
+            pb = AppKit.NSPasteboard.generalPasteboard()
+            pb.clearContents()
+            pb.setString_forType_(report, AppKit.NSPasteboardTypeString)
+            self._send_response({"action": "copied"})
+
+        elif action == "open_log":
+            import subprocess
+            import diagnostics
+            subprocess.Popen(["/usr/bin/open", "-R", diagnostics._LOG_PATH.as_posix()])
+
+        elif action == "self_test":
+            import threading
+
+            import diagnostics
+
+            def _run():
+                result = diagnostics.self_test(self._config)
+
+                def _respond():
+                    self._send_response({"action": "self_test_result",
+                                         **result})
+                AppHelper.callAfter(_respond)
+
+            threading.Thread(target=_run, daemon=True).start()
+
         elif action == "check_updates":
             import threading
             if self._updater is None:

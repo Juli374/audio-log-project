@@ -470,6 +470,46 @@ body {
     padding-right: 36px;
 }
 
+.diag-list {
+    margin-top: 10px;
+    font-size: 13px;
+    line-height: 1.7;
+}
+.diag-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 3px 0;
+}
+.diag-mark {
+    flex-shrink: 0;
+    width: 18px;
+    font-weight: 700;
+}
+.diag-ok .diag-mark { color: var(--success); }
+.diag-bad .diag-mark { color: var(--danger); }
+.diag-bad .diag-name { font-weight: 600; }
+.diag-fix {
+    color: var(--text-secondary);
+    font-size: 12px;
+    margin: 2px 0 6px 26px;
+}
+.diag-problems {
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    max-height: 160px;
+    overflow-y: auto;
+    user-select: text;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
 .shortcut-btn {
     padding: 10px 14px;
     min-width: 120px;
@@ -715,6 +755,18 @@ body {
     </div>
     <button class="save-btn" onclick="app.saveSettings()">Сохранить</button>
     <span id="saveNote" style="margin-left: 10px; font-size: 12px; color: var(--text-secondary);">Смена режима требует перезапуска</span>
+
+    <div class="setting-group" style="margin-top: 28px; border-top: 1px solid var(--border); padding-top: 20px;">
+        <div class="setting-label">Диагностика</div>
+        <div class="setting-description">Что мешает работе на этом компьютере. Если перевод не срабатывает — смотри сюда первым делом.</div>
+        <div id="diagList" class="diag-list">проверяю…</div>
+        <div style="margin-top: 12px;">
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.runSelfTest()">Проверить перевод</button>
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.copyDiagnostics()">Скопировать отчёт</button>
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.send('open_log')">Показать лог</button>
+        </div>
+        <div id="selfTestResult" style="margin-top: 10px; font-size: 13px;"></div>
+    </div>
 </div>
 
 <!-- Detail modal -->
@@ -760,7 +812,55 @@ const app = {
         this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
         this.send('get_settings');
         this.send('get_permissions');
+        this.send('get_diagnostics');
         this.switchTab('history');
+    },
+
+    // ─── Diagnostics ───
+
+    escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s == null ? '' : String(s);
+        return div.innerHTML;
+    },
+
+    renderDiagnostics(d) {
+        const el = document.getElementById('diagList');
+        if (!el || !d) return;
+
+        const head = `AudioLog ${d.version} · macOS ${d.macos} · ${d.arch} · сочетание ${d.shortcut}`;
+        const rows = d.checks.map(c => {
+            const cls = c.ok ? 'diag-ok' : 'diag-bad';
+            const mark = c.ok ? '✓' : '✕';
+            const fix = (!c.ok && c.fix)
+                ? `<div class="diag-fix">${this.escapeHtml(c.fix)}</div>` : '';
+            return `<div class="diag-row ${cls}"><span class="diag-mark">${mark}</span>`
+                 + `<span><span class="diag-name">${this.escapeHtml(c.name)}</span>`
+                 + ` — ${this.escapeHtml(c.detail)}</span></div>${fix}`;
+        }).join('');
+
+        const problems = d.problems && d.problems.length
+            ? `<div class="diag-problems">${this.escapeHtml(d.problems.join('\n'))}</div>`
+            : '';
+
+        el.innerHTML = `<div class="diag-fix" style="margin-left:0">${this.escapeHtml(head)}</div>`
+                     + rows + problems;
+    },
+
+    runSelfTest() {
+        document.getElementById('selfTestResult').textContent = 'проверяю…';
+        this.send('self_test');
+    },
+
+    onSelfTestResult(r) {
+        const el = document.getElementById('selfTestResult');
+        el.style.color = r.ok ? 'var(--success)' : 'var(--danger)';
+        el.textContent = r.message;
+        this.send('get_diagnostics');
+    },
+
+    copyDiagnostics() {
+        this.send('copy_diagnostics');
     },
 
     send(action, data) {
@@ -790,6 +890,12 @@ const app = {
                 break;
             case 'permissions':
                 this.onPermissions(response);
+                break;
+            case 'diagnostics':
+                this.renderDiagnostics(response.data);
+                break;
+            case 'self_test_result':
+                this.onSelfTestResult(response);
                 break;
             case 'deleted':
                 this.removeEntry(response.id);

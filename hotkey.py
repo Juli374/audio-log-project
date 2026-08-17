@@ -188,6 +188,8 @@ class HotkeyListener:
         self._local_monitor = None
         self._tap = None
         self._tap_source = None
+        self._tap_retry_timer: threading.Timer | None = None
+        self._tap_retries = 0
         self._poll_timer: threading.Timer | None = None
         self._esc_stop = threading.Event()
 
@@ -269,7 +271,13 @@ class HotkeyListener:
     # ── Translate shortcut (CGEventTap) ──
 
     def _install_translate_tap(self) -> None:
-        """Install a session-wide tap that consumes the translate shortcut."""
+        """Install a session-wide tap that consumes the translate shortcut.
+
+        Creating the tap needs Accessibility. When it is missing the call
+        simply returns NULL, so we keep retrying in the background: people
+        grant the permission after the app is already running, and without
+        the retry the shortcut stays dead until a restart nobody knows to do.
+        """
         mask = 1 << kCGEventKeyDown
         self._tap = CGEventTapCreate(
             kCGSessionEventTap, kCGHeadInsertEventTap,
@@ -279,14 +287,40 @@ class HotkeyListener:
             log.error(
                 "Translate shortcut unavailable: could not create event tap. "
                 "Grant Accessibility permission to AudioLog.")
+            self._schedule_tap_retry()
             return
 
         self._tap_source = CFMachPortCreateRunLoopSource(None, self._tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), self._tap_source,
                            kCFRunLoopCommonModes)
         CGEventTapEnable(self._tap, True)
+        self._tap_retries = 0
         log.info("Translate shortcut: %s",
                  shortcut_label(self._translate_key, self._translate_mods))
+
+    def _schedule_tap_retry(self) -> None:
+        """Try again shortly — the user may be granting the permission now."""
+        if self._tap_retry_timer is not None:
+            return
+        self._tap_retries += 1
+        # Back off from every 5s to every couple of minutes; a permission
+        # granted at any point still gets picked up, without spinning.
+        delay = min(5.0 * self._tap_retries, 120.0)
+
+        def _retry():
+            self._tap_retry_timer = None
+            if self._tap is not None:
+                return
+            AppHelper.callAfter(self._install_translate_tap)
+
+        self._tap_retry_timer = threading.Timer(delay, _retry)
+        self._tap_retry_timer.daemon = True
+        self._tap_retry_timer.start()
+
+    @property
+    def translate_ready(self) -> bool:
+        """True when the translate shortcut is actually armed."""
+        return self._tap is not None
 
     def _tap_callback(self, proxy, event_type, event, refcon):
         """Runs for every key-down in the session. Must stay fast.
@@ -447,6 +481,9 @@ class HotkeyListener:
     def stop(self):
         self._cancel_polling()
         self._stop_esc_polling()
+        if self._tap_retry_timer is not None:
+            self._tap_retry_timer.cancel()
+            self._tap_retry_timer = None
         for attr in ("_global_monitor", "_local_monitor"):
             monitor = getattr(self, attr, None)
             if monitor is not None:
