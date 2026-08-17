@@ -164,10 +164,20 @@ def probe_microphone(seconds: float = 2.0) -> dict:
     cfg = Config()
     idx = Recorder(cfg)._pick_input_device()
     if idx is None:
+        try:
+            visible = ", ".join(
+                d["name"] for d in sd.query_devices()
+                if d.get("max_input_channels", 0) > 0) or "ни одного"
+        except Exception:
+            visible = "не удалось перечислить"
         return {"ok": False,
-                "message": "macOS не показывает ни одного микрофона. "
-                           "Подключи наушники или микрофон — на Mac mini и "
-                           "Mac Studio встроенного нет."}
+                "message": "Ни один микрофон не открылся. Видимые входы: "
+                           f"{visible}. Если список пуст — подключи микрофон "
+                           "или выбери наушники в Системных настройках → Звук "
+                           "→ Вход (на Mac mini и Mac Studio своего микрофона "
+                           "нет). Если список не пуст — проверь Системные "
+                           "настройки → Конфиденциальность и безопасность → "
+                           "Микрофон."}
 
     name = sd.query_devices()[idx]["name"]
     chunks: list = []

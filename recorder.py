@@ -111,71 +111,76 @@ class Recorder:
         """Called by PortAudio when the stream becomes inactive."""
         self._stream_finished.set()
 
-    def _pick_input_device(self) -> int | None:
-        """Pick input device: prefer macOS default, but skip known pseudo-devices.
+    def _can_open(self, index: int) -> bool:
+        """True if this device actually opens for input right now.
 
-        System default sometimes points to a loopback/virtual device
-        (BlackHole, Soundflower, Loopback, ZoomAudioDevice, iShowU) or
-        Apple's "Find My" placeholder — these show up as legitimate input
-        devices but either produce silence or aren't real mics. For a
-        dictation tool, the real built-in mic is almost always what the
-        user wants, so we skip these and fall back to the first physical
-        microphone we find.
+        Names lie in both directions — Apple appends "Find My" to working
+        AirPods, and a headset that is connected for playback can refuse to
+        open for input (PortAudio -9986). Opening it is the only honest test.
+        """
+        try:
+            stream = sd.InputStream(
+                device=index, samplerate=self._config.sample_rate,
+                channels=self._config.channels, dtype=self._config.dtype,
+                blocksize=getattr(self._config, "blocksize", 1600))
+            stream.close()
+            return True
+        except Exception as e:
+            log.warning("Input [%d] is not usable right now: %s", index, e)
+            return False
+
+    def _pick_input_device(self) -> int | None:
+        """Pick the first input device that genuinely opens.
+
+        Order of preference: whatever macOS has as the system default, then
+        the built-in microphone, then anything else physical, then known
+        virtual devices as a last resort. Each candidate is opened before it
+        is chosen, so a dead headset never blocks recording when a working
+        microphone is sitting right next to it.
         """
         devices = sd.query_devices()
         default_idx = sd.default.device[0]
 
-        if default_idx is not None and default_idx < len(devices):
-            default_dev = devices[default_idx]
-            if (default_dev["max_input_channels"] > 0
-                    and not _is_virtual_device(default_dev["name"])):
-                log.info("Audio input: [%d] %s (system default)",
-                         default_idx, default_dev["name"])
-                return default_idx
-            if default_dev["max_input_channels"] > 0:
-                log.warning(
-                    "System default input [%d] %s is a virtual/loopback "
-                    "device — falling back to built-in mic",
-                    default_idx, default_dev["name"])
+        candidates: list[tuple[int, str]] = []
 
-        # Default is bad — find best alternative
-        builtin = None
-        any_mic = None
+        def add(index: int, why: str) -> None:
+            if index is None or index >= len(devices):
+                return
+            if devices[index]["max_input_channels"] < 1:
+                return
+            if any(index == i for i, _ in candidates):
+                return
+            candidates.append((index, why))
+
+        add(default_idx, "system default")
         for i, d in enumerate(devices):
-            if d["max_input_channels"] < 1:
-                continue
-            if _is_virtual_device(d["name"]):
+            if d["max_input_channels"] < 1 or _is_virtual_device(d["name"]):
                 continue
             name = d["name"].lower()
-            if "macbook" in name or "built-in" in name:
-                builtin = i
-            elif any_mic is None:
-                any_mic = i
-
-        chosen = builtin if builtin is not None else any_mic
-        if chosen is not None:
-            log.info("Audio input: [%d] %s (auto-selected, default was unusable)",
-                     chosen, devices[chosen]["name"])
-            return chosen
-
-        # Nothing survived the filter. A Mac mini or Studio has no built-in
-        # mic at all, so refusing every filtered device leaves it with no way
-        # to record — and the user just sees "start failed" with no cause.
-        # Recording through a suspicious device beats not recording.
+            if "macbook" in name or "built-in" in name or "внутренн" in name:
+                add(i, "built-in microphone")
+        for i, d in enumerate(devices):
+            if d["max_input_channels"] > 0 and not _is_virtual_device(d["name"]):
+                add(i, "available microphone")
+        # Virtual devices last: on a Mac mini with nothing else attached,
+        # recording through one beats refusing to record at all.
         for i, d in enumerate(devices):
             if d["max_input_channels"] > 0:
-                log.warning(
-                    "No plain microphone available — falling back to [%d] %s. "
-                    "If recordings come out silent, pick a different input in "
-                    "System Settings → Sound.", i, d["name"])
-                return i
+                add(i, "last resort")
 
-        # Bluetooth headphones are a common cause: while macOS uses them for
-        # high-quality playback they expose no input at all, so "connected"
-        # and "usable as a microphone" are different states.
-        names = ", ".join(d["name"] for d in devices) or "нет устройств"
-        log.error("No input device with any input channels exists. Devices "
-                  "visible: %s", names)
+        for index, why in candidates:
+            if self._can_open(index):
+                log.info("Audio input: [%d] %s (%s)",
+                         index, devices[index]["name"], why)
+                return index
+
+        if candidates:
+            tried = ", ".join(devices[i]["name"] for i, _ in candidates)
+            log.error("No input device would open. Tried: %s", tried)
+        else:
+            names = ", ".join(d["name"] for d in devices) or "нет устройств"
+            log.error("No input device with any input channels exists. "
+                      "Devices visible: %s", names)
         return None
 
     def _ensure_stream(self) -> None:

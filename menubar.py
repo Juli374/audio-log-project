@@ -447,13 +447,7 @@ class MenuBarApp(rumps.App):
                 text = "Запись не началась, и определить причину не удалось."
 
             def _show():
-                self._translator._popup.show(
-                    "Запись не началась.\n\n" + text + "\n\n"
-                    "Если наушники подключены, но их нет в списке — macOS "
-                    "держит их в режиме воспроизведения. Открой Системные "
-                    "настройки → Звук → Вход и выбери их там; на Mac mini "
-                    "другого микрофона нет."
-                )
+                self._translator._popup.show("Запись не началась.\n\n" + text)
             AppHelper.callAfter(_show)
 
         threading.Thread(target=_run, daemon=True).start()
