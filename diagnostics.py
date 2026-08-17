@@ -10,10 +10,10 @@ Deliberately reports facts about configuration, never their values: whether a
 key is set, never the key; how many characters were captured, never the text.
 """
 
-import json
-import os
 import platform
 import subprocess
+import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import version as version_mod
@@ -67,7 +67,11 @@ def _signature_state() -> tuple[bool, str]:
 
 
 def _recent_problems(limit: int = 12) -> list[str]:
-    """Tail the log for lines that indicate an actual failure."""
+    """Tail the log for lines that indicate an actual failure.
+
+    Keeps the traceback that follows an exception line — without it a report
+    says "could not spawn update helper" and nothing about why.
+    """
     if not _LOG_PATH.exists():
         return []
     try:
@@ -76,9 +80,126 @@ def _recent_problems(limit: int = 12) -> list[str]:
     except Exception:
         return []
 
-    hits = [ln.rstrip() for ln in lines
-            if any(marker in ln for marker in _INTERESTING)]
-    return hits[-limit:]
+    # Only today and yesterday: a week-old failure that has since been fixed
+    # is noise, and it pushes the line that actually matters off the report.
+    recent_days = {
+        (datetime.now() - timedelta(days=d)).strftime("%Y-%m-%d")
+        for d in (0, 1)
+    }
+
+    hits: list[str] = []
+    trailing = 0
+    for line in lines:
+        if line[:10] not in recent_days and line[:1].isdigit():
+            trailing = 0
+            continue
+        if any(marker in line for marker in _INTERESTING):
+            hits.append(line.rstrip())
+            trailing = 6 if "ERROR" in line else 0
+        elif trailing and (line.startswith((" ", "\t")) or "Error" in line
+                           or line.startswith("Traceback")):
+            hits.append(line.rstrip())
+            trailing -= 1
+        else:
+            trailing = 0
+    return hits[-(limit * 3):]
+
+
+def _audio_inputs() -> tuple[list[dict], str]:
+    """Every input device macOS reports, and which one we would record from."""
+    try:
+        import sounddevice as sd
+        from recorder import _is_virtual_device
+    except Exception as e:
+        return [], f"список устройств недоступен: {e}"
+
+    try:
+        devices = sd.query_devices()
+        default_idx = sd.default.device[0]
+    except Exception as e:
+        return [], f"аудиосистема не отвечает: {e}"
+
+    inputs = []
+    for i, d in enumerate(devices):
+        if d.get("max_input_channels", 0) < 1:
+            continue
+        inputs.append({
+            "index": i,
+            "name": d["name"],
+            "is_default": i == default_idx,
+            "filtered": _is_virtual_device(d["name"]),
+        })
+
+    if not inputs:
+        return inputs, "микрофонов не найдено"
+
+    try:
+        from recorder import Recorder
+        from config import Config
+        chosen = Recorder(Config())._pick_input_device()
+        picked = next((d["name"] for d in inputs if d["index"] == chosen),
+                      "не выбран")
+    except Exception as e:
+        picked = f"выбор не удался: {e}"
+    return inputs, picked
+
+
+def probe_microphone(seconds: float = 2.0) -> dict:
+    """Actually open the mic briefly and report what came back.
+
+    More trustworthy than asking macOS for a permission status: a denied
+    microphone still opens a stream, it just delivers digital silence. This
+    distinguishes "no device", "device delivers nothing", "device delivers
+    silence" and "working".
+    """
+    try:
+        import numpy as np
+        import sounddevice as sd
+
+        from config import Config
+        from recorder import Recorder
+    except Exception as e:
+        return {"ok": False, "message": f"аудиосистема недоступна: {e}"}
+
+    cfg = Config()
+    idx = Recorder(cfg)._pick_input_device()
+    if idx is None:
+        return {"ok": False,
+                "message": "macOS не показывает ни одного микрофона. "
+                           "Подключи наушники или микрофон — на Mac mini и "
+                           "Mac Studio встроенного нет."}
+
+    name = sd.query_devices()[idx]["name"]
+    chunks: list = []
+    try:
+        with sd.InputStream(device=idx, samplerate=cfg.sample_rate, channels=1,
+                            dtype="float32", blocksize=cfg.blocksize,
+                            callback=lambda i, f, t, s: chunks.append(i.copy())):
+            time.sleep(seconds)
+    except Exception as e:
+        return {"ok": False,
+                "message": f"Микрофон «{name}» не открывается: {e}. "
+                           "Проверь Системные настройки → Конфиденциальность "
+                           "и безопасность → Микрофон."}
+
+    if not chunks:
+        return {"ok": False,
+                "message": f"Микрофон «{name}» открылся, но не отдал ни одного "
+                           "звукового блока."}
+
+    audio = np.concatenate(chunks).flatten()
+    peak = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    if peak == 0.0:
+        return {"ok": False,
+                "message": f"Микрофон «{name}» отдаёт полную тишину. Причины "
+                           "по убыванию вероятности: не выдан доступ к "
+                           "микрофону (Системные настройки → "
+                           "Конфиденциальность и безопасность → Микрофон); "
+                           "наушники сейчас не в режиме микрофона; выбран не "
+                           "тот вход в Системные настройки → Звук."}
+
+    return {"ok": True,
+            "message": f"Микрофон «{name}» пишет (уровень {peak:.3f})."}
 
 
 def collect(config, hotkey_listener=None, transcriber=None) -> dict:
@@ -93,8 +214,14 @@ def collect(config, hotkey_listener=None, transcriber=None) -> dict:
     speech_key = bool(getattr(config, "groq_api_key", "") if mode == "groq"
                       else getattr(config, "openai_api_key", ""))
     signed, sign_detail = _signature_state()
+    inputs, picked = _audio_inputs()
 
     checks = [
+        _ok("Микрофон найден", bool(inputs),
+            f"пишем с «{picked}»" if inputs else "ни одного входа в системе",
+            "" if inputs else
+            "Подключи микрофон или наушники. На Mac mini и Mac Studio "
+            "встроенного микрофона нет."),
         _ok("Универсальный доступ", accessibility,
             "выдан" if accessibility else "не выдан",
             "" if accessibility else
@@ -128,6 +255,8 @@ def collect(config, hotkey_listener=None, transcriber=None) -> dict:
         "translate_model": getattr(config, "translate_model", ""),
         "translate_target": getattr(config, "translate_target", "ru"),
         "transcription_mode": mode,
+        "audio_inputs": inputs,
+        "audio_picked": picked,
         "checks": checks,
         "all_ok": all(c["ok"] for c in checks),
         "log_path": str(_LOG_PATH),
@@ -150,6 +279,19 @@ def as_text(data: dict) -> str:
         if not c["ok"] and c["fix"]:
             lines.append(f"       → {c['fix']}")
 
+    if data.get("audio_inputs"):
+        lines += ["", "Звуковые входы:"]
+        for d in data["audio_inputs"]:
+            marks = []
+            if d["is_default"]:
+                marks.append("системный по умолчанию")
+            if d["filtered"]:
+                marks.append("отсеян как виртуальный")
+            suffix = f"  ({', '.join(marks)})" if marks else ""
+            lines.append(f"  [{d['index']}] {d['name']}{suffix}")
+    else:
+        lines += ["", "Звуковые входы: ни одного"]
+
     if data["problems"]:
         lines += ["", "Последние ошибки в логе:"]
         lines += [f"  {p}" for p in data["problems"]]
@@ -161,14 +303,17 @@ def as_text(data: dict) -> str:
 
 
 def self_test(config) -> dict:
-    """Actively exercise the translate path and report where it breaks.
+    """Actively exercise recording and translation, and report where it breaks.
 
-    Runs the real steps in order — clipboard capture, then a live API call
-    — so the result reflects what happens on a real press rather than what
-    the configuration claims.
+    Runs the real steps — open the mic, then a live API call — so the result
+    reflects what happens in use rather than what the configuration claims.
     """
     from output import is_trusted
     import translate_popup
+
+    mic = probe_microphone()
+    if not mic["ok"]:
+        return {"ok": False, "stage": "microphone", "message": mic["message"]}
 
     if not is_trusted():
         return {"ok": False, "stage": "accessibility",
@@ -194,4 +339,5 @@ def self_test(config) -> dict:
                 "message": "Claude вернул пустой ответ."}
 
     return {"ok": True, "stage": "done",
-            "message": f"Перевод работает. Проверочная фраза: «{out.strip()}»"}
+            "message": f"{mic['message']} Перевод работает — проверочная "
+                       f"фраза: «{out.strip()}»"}

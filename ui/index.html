@@ -761,7 +761,7 @@ body {
         <div class="setting-description">Что мешает работе на этом компьютере. Если перевод не срабатывает — смотри сюда первым делом.</div>
         <div id="diagList" class="diag-list">проверяю…</div>
         <div style="margin-top: 12px;">
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.runSelfTest()">Проверить перевод</button>
+            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.runSelfTest()">Проверить запись и перевод</button>
             <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.copyDiagnostics()">Скопировать отчёт</button>
             <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.send('open_log')">Показать лог</button>
         </div>
@@ -848,7 +848,9 @@ const app = {
     },
 
     runSelfTest() {
-        document.getElementById('selfTestResult').textContent = 'проверяю…';
+        document.getElementById('selfTestResult').style.color = 'var(--text-secondary)';
+        document.getElementById('selfTestResult').textContent =
+            'проверяю… (микрофон включится на пару секунд)';
         this.send('self_test');
     },
 

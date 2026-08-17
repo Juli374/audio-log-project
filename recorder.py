@@ -156,9 +156,24 @@ class Recorder:
         if chosen is not None:
             log.info("Audio input: [%d] %s (auto-selected, default was unusable)",
                      chosen, devices[chosen]["name"])
-        else:
-            log.error("No usable input device found!")
-        return chosen
+            return chosen
+
+        # Nothing survived the filter. A Mac mini or Studio has no built-in
+        # mic at all, so refusing every filtered device leaves it with no way
+        # to record — and the user just sees "start failed" with no cause.
+        # Recording through a suspicious device beats not recording.
+        for i, d in enumerate(devices):
+            if d["max_input_channels"] > 0:
+                log.warning(
+                    "No plain microphone available — falling back to [%d] %s. "
+                    "If recordings come out silent, pick a different input in "
+                    "System Settings → Sound.", i, d["name"])
+                return i
+
+        log.error("No input device with any input channels exists — check "
+                  "System Settings → Privacy & Security → Microphone, and "
+                  "that a microphone is connected")
+        return None
 
     def _ensure_stream(self) -> None:
         """Create a fresh audio input stream.
