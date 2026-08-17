@@ -49,6 +49,11 @@ OPTIONS = {
         'LSMinimumSystemVersion': '13.0',
         'NSMicrophoneUsageDescription': 'AudioLog needs microphone access for voice dictation.',
         'NSAppleEventsUsageDescription': 'AudioLog needs accessibility for text insertion.',
+        # A bundle launched by launchd inherits no locale, so Python falls
+        # back to ASCII for any open() without an explicit encoding — which
+        # is how a single em dash in the update helper silently disabled
+        # auto-update. Force UTF-8 so the whole class of bug cannot recur.
+        'LSEnvironment': {'PYTHONUTF8': '1'},
     },
     'iconfile': 'assets/AppIcon.icns',
     'resources': [

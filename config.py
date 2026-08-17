@@ -114,7 +114,7 @@ class Config:
         """Load persistent settings from JSON file."""
         p = Path(self.settings_path)
         if p.exists():
-            with open(p) as f:
+            with open(p, encoding="utf-8") as f:
                 return json.load(f)
         return {
             "language": self.language,
@@ -202,5 +202,5 @@ class Config:
         self.ensure_data_dir()
         merged = self.load_settings()
         merged.update(settings)
-        with open(self.settings_path, "w") as f:
+        with open(self.settings_path, "w", encoding="utf-8") as f:
             json.dump(merged, f, ensure_ascii=False, indent=2)

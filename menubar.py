@@ -164,6 +164,9 @@ class MenuBarApp(rumps.App):
                 AppKit.NSBeep()
                 self._set_state(ICON_IDLE, "❌ Ошибка записи", "Ошибка", "error")
                 self._auto_hide_overlay(delay=5.0)
+                # "Recording failed" in the menu bar tells the user nothing
+                # actionable. Say which cause it is, in a window they can read.
+                self._explain_recording_failure()
 
         threading.Thread(target=_start, daemon=True).start()
 
@@ -430,6 +433,29 @@ class MenuBarApp(rumps.App):
         log.warning("Accessibility: not granted — showing the system prompt")
         request_accessibility(prompt=True)
         self._warn_if_translate_dead()
+
+    def _explain_recording_failure(self) -> None:
+        """Show the actual reason recording could not start."""
+        def _run():
+            try:
+                import diagnostics
+                probe = diagnostics.probe_microphone(seconds=0.5)
+                text = probe["message"]
+            except Exception:
+                log.exception("could not diagnose recording failure")
+                text = "Запись не началась, и определить причину не удалось."
+
+            def _show():
+                self._translator._popup.show(
+                    "Запись не началась.\n\n" + text + "\n\n"
+                    "Если наушники подключены, но их нет в списке — macOS "
+                    "держит их в режиме воспроизведения. Открой Системные "
+                    "настройки → Звук → Вход и выбери их там; на Mac mini "
+                    "другого микрофона нет."
+                )
+            AppHelper.callAfter(_show)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _warn_if_translate_dead(self) -> None:
         """Say out loud when the translate shortcut failed to arm.

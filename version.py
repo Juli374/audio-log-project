@@ -25,7 +25,7 @@ def _from_bundle() -> str | None:
 def _from_file() -> str | None:
     path = Path(__file__).parent / "VERSION"
     try:
-        return path.read_text().strip() or None
+        return path.read_text(encoding="utf-8").strip() or None
     except Exception:
         return None
 

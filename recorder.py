@@ -170,9 +170,12 @@ class Recorder:
                     "System Settings → Sound.", i, d["name"])
                 return i
 
-        log.error("No input device with any input channels exists — check "
-                  "System Settings → Privacy & Security → Microphone, and "
-                  "that a microphone is connected")
+        # Bluetooth headphones are a common cause: while macOS uses them for
+        # high-quality playback they expose no input at all, so "connected"
+        # and "usable as a microphone" are different states.
+        names = ", ".join(d["name"] for d in devices) or "нет устройств"
+        log.error("No input device with any input channels exists. Devices "
+                  "visible: %s", names)
         return None
 
     def _ensure_stream(self) -> None:

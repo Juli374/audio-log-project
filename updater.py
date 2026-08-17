@@ -159,7 +159,7 @@ def staged_update() -> tuple[str, Path] | None:
     if not STAGED_MARKER.exists() or not STAGED_APP.exists():
         return None
     try:
-        marker = json.loads(STAGED_MARKER.read_text())
+        marker = json.loads(STAGED_MARKER.read_text(encoding="utf-8"))
     except Exception:
         return None
     staged_version = str(marker.get("version") or "")
@@ -188,9 +188,13 @@ def _spawn_helper(staged: Path, target: Path) -> bool:
     try:
         UPDATE_DIR.mkdir(parents=True, exist_ok=True)
         HELPER_LOG.parent.mkdir(parents=True, exist_ok=True)
-        HELPER_PATH.write_text(HELPER_SCRIPT)
+        # encoding is not optional here: inside the py2app bundle there is no
+        # locale, so Python defaults to ASCII and the em dash in the helper
+        # script raises UnicodeEncodeError — which silently broke every
+        # auto-update, since the download and verification had already passed.
+        HELPER_PATH.write_text(HELPER_SCRIPT, encoding="utf-8")
         HELPER_PATH.chmod(0o755)
-        logfile = open(HELPER_LOG, "a")
+        logfile = open(HELPER_LOG, "a", encoding="utf-8")
         subprocess.Popen(
             ["/bin/bash", str(HELPER_PATH), str(staged), str(target),
              LAUNCH_LABEL, str(STAGED_MARKER)],
@@ -456,7 +460,7 @@ class Updater:
             "staged_at": int(time.time()),
             "source": url,
             "sha256": expected_sha,
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
         shutil.rmtree(work, ignore_errors=True)
         log.info("staged %s at %s", new_version, STAGED_APP)
 
