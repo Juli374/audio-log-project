@@ -13,7 +13,6 @@ key is set, never the key; how many characters were captured, never the text.
 import platform
 import subprocess
 import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import version as version_mod
@@ -80,19 +79,18 @@ def _recent_problems(limit: int = 12) -> list[str]:
     except Exception:
         return []
 
-    # Only today and yesterday: a week-old failure that has since been fixed
-    # is noise, and it pushes the line that actually matters off the report.
-    recent_days = {
-        (datetime.now() - timedelta(days=d)).strftime("%Y-%m-%d")
-        for d in (0, 1)
-    }
+    # Only this run of the app. Errors from the version the user just
+    # replaced are not evidence of a current problem — showing them makes a
+    # fixed app look broken, which is worse than showing nothing.
+    start = 0
+    for i, line in enumerate(lines):
+        if "Starting audio-log-project" in line:
+            start = i
+    lines = lines[start:]
 
     hits: list[str] = []
     trailing = 0
     for line in lines:
-        if line[:10] not in recent_days and line[:1].isdigit():
-            trailing = 0
-            continue
         if any(marker in line for marker in _INTERESTING):
             hits.append(line.rstrip())
             trailing = 6 if "ERROR" in line else 0
@@ -303,10 +301,10 @@ def as_text(data: dict) -> str:
         lines += ["", "Звуковые входы: ни одного"]
 
     if data["problems"]:
-        lines += ["", "Последние ошибки в логе:"]
+        lines += ["", "Ошибки с момента запуска приложения:"]
         lines += [f"  {p}" for p in data["problems"]]
     else:
-        lines += ["", "Ошибок в логе нет."]
+        lines += ["", "Ошибок с момента запуска приложения нет."]
 
     lines += ["", f"Полный лог: {data['log_path']}"]
     return "\n".join(lines)

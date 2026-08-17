@@ -115,6 +115,11 @@ _DEFAULT_MODEL = "claude-sonnet-5"
 # How often the panel is repainted while text streams in.
 _STREAM_REDRAW_INTERVAL = 0.12
 
+# Transient network failures (DNS blips, dropped connections) are retried:
+# one bad resolve should not read as "the translator is broken".
+_NETWORK_ATTEMPTS = 3
+_NETWORK_RETRY_PAUSE = 0.6
+
 _PLACEHOLDER = "Перевожу…"
 
 
@@ -335,18 +340,50 @@ def _build_request(text: str, target: str, config, stream: bool):
 def _http_error(e) -> RuntimeError:
     detail = e.read().decode(errors="replace")[:200]
     log.error("Claude API error %d: %s", e.code, detail)
+    if e.code in (401, 403):
+        return RuntimeError("ключ Anthropic не принят — проверь его в настройках")
+    if e.code == 429:
+        return RuntimeError("слишком много запросов, попробуй через минуту")
+    if e.code >= 500:
+        return RuntimeError(f"сервер Claude временно недоступен ({e.code})")
     return RuntimeError(f"Claude ответил ошибкой {e.code}")
+
+
+def _network_error(e) -> RuntimeError:
+    """Plain-language message for a connection that never got through."""
+    log.error("Network failure talking to Claude: %r", e)
+    return RuntimeError(
+        "нет связи с Claude. Проверь интернет — если он есть, значит "
+        "соединение сорвалось; попробуй ещё раз")
+
+
+def _open_with_retry(request, timeout: float):
+    """Send the request, retrying transient network failures.
+
+    A momentary DNS hiccup used to surface as a raw urlopen error and read
+    as "the app is broken" — retrying makes those invisible, which is what
+    they should be. HTTP errors are not retried: those are answers.
+    """
+    last: Exception | None = None
+    for attempt in range(_NETWORK_ATTEMPTS):
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            raise _http_error(e) from e
+        except (urllib.error.URLError, OSError) as e:
+            last = e
+            if attempt + 1 < _NETWORK_ATTEMPTS:
+                log.warning("Network attempt %d failed (%s) — retrying",
+                            attempt + 1, e)
+                time.sleep(_NETWORK_RETRY_PAUSE * (attempt + 1))
+    raise _network_error(last)
 
 
 def _translate_chunk(text: str, target: str, config) -> str:
     """One Claude call for one chunk of document text."""
-    try:
-        with urllib.request.urlopen(
-                _build_request(text, target, config, stream=False),
-                timeout=_API_TIMEOUT) as response:
-            data = json.loads(response.read().decode())
-    except urllib.error.HTTPError as e:
-        raise _http_error(e) from e
+    with _open_with_retry(_build_request(text, target, config, stream=False),
+                          _API_TIMEOUT) as response:
+        data = json.loads(response.read().decode())
 
     blocks = data.get("content", [])
     return "".join(
@@ -359,12 +396,8 @@ def _translate_streaming(text: str, target: str, config, on_text) -> str:
     Waiting for a whole page before showing anything is what made this feel
     slow — the first words land in about a second, so show them.
     """
-    try:
-        response = urllib.request.urlopen(
-            _build_request(text, target, config, stream=True),
-            timeout=_API_TIMEOUT)
-    except urllib.error.HTTPError as e:
-        raise _http_error(e) from e
+    response = _open_with_retry(
+        _build_request(text, target, config, stream=True), _API_TIMEOUT)
 
     parts: list[str] = []
     last_push = 0.0
