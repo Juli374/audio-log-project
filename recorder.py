@@ -42,8 +42,13 @@ log = get_logger(__name__)
 # Substrings that identify non-physical input devices we never want to
 # auto-select for dictation. Matched case-insensitively against the device
 # name reported by PortAudio.
+#
+# "Find My" is deliberately NOT here. macOS appends that suffix to the name of
+# genuinely connected AirPods, so filtering on it silently rejected the user's
+# headset and recorded the laptop's far-field mic instead — quieter, noisier,
+# and worse to transcribe. macOS does not make an unreachable device the
+# system default, so trusting the default is the better signal.
 _VIRTUAL_DEVICE_SUBSTRINGS = (
-    "find my",         # Apple's "Find My" pseudo-device
     "blackhole",       # BlackHole 2ch / 16ch / 64ch
     "soundflower",
     "loopback",        # Rogue Amoeba Loopback
@@ -53,6 +58,11 @@ _VIRTUAL_DEVICE_SUBSTRINGS = (
     "multi-output",
     "virtual",
 )
+
+
+# How long to wait for the audio device to deliver its first buffer before
+# treating the recording as started. Sized for Bluetooth profile switching.
+_FIRST_CHUNK_TIMEOUT = 1.2
 
 
 def _is_virtual_device(name: str) -> bool:
@@ -71,6 +81,7 @@ class Recorder:
         self._recording = False
         self._should_stop = False
         self._stream_finished = threading.Event()
+        self._first_chunk = threading.Event()
         self.last_duration: float = 0.0
         self.last_rms: float = 0.0
         self.last_peak: float = 0.0
@@ -92,6 +103,7 @@ class Recorder:
         # are harmless.
         with self._lock:
             self._chunks.append(indata.copy())
+        self._first_chunk.set()
         if self._should_stop:
             raise sd.CallbackStop
 
@@ -195,7 +207,17 @@ class Recorder:
         log.info("Audio stream opened on device [%d]", device_id)
 
     def start(self) -> None:
+        self._first_chunk.clear()
         self._ensure_stream()
+
+        # A Bluetooth headset takes roughly half a second to switch into its
+        # microphone profile and deliver the first buffer. Starting the clock
+        # (and beeping) before then means the user speaks into a mic that is
+        # not recording yet and loses their first words. Wired and built-in
+        # devices answer in milliseconds, so this costs them nothing.
+        if not self._first_chunk.wait(timeout=_FIRST_CHUNK_TIMEOUT):
+            log.warning("No audio within %.1fs of opening the stream — "
+                        "recording anyway", _FIRST_CHUNK_TIMEOUT)
 
         with self._lock:
             self._chunks.clear()

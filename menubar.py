@@ -133,7 +133,6 @@ class MenuBarApp(rumps.App):
             return
         self._is_recording = True
         self._cancel_auto_hide()  # prevent previous timer from hiding new overlay
-        self._feedback.on_record_start()
         self.set_icon(ICON_RECORDING)
         tgt = (self._config.target_language or "").lower()
         if tgt == "en":
@@ -152,6 +151,11 @@ class MenuBarApp(rumps.App):
         def _start():
             try:
                 self._recorder.start()
+                # Beep only once the device is actually delivering audio —
+                # on a Bluetooth headset that is ~0.5s after the keypress,
+                # and beeping earlier invites the user to talk into a mic
+                # that isn't listening yet.
+                AppHelper.callAfter(self._feedback.on_record_start)
             except Exception:
                 log.exception("Failed to start recording")
                 self._is_recording = False
