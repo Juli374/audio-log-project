@@ -1,5 +1,6 @@
 """macOS menu bar indicator using rumps."""
 
+import os
 import threading
 import time
 
@@ -534,14 +535,35 @@ class MenuBarApp(rumps.App):
         updater itself once the app has been idle long enough.
         """
         if self._updater is None or not self._updater.staged_version:
+            self._history_window.notify_update_failed(
+                "Устанавливать нечего — обновление не загружено.")
             return
+
         self._overlay.show("Устанавливаю обновление…", state="process")
         if not self._updater.apply_now():
+            # Tell the window, not just the overlay strip: the Settings tab
+            # is showing "installing, the app will restart" and would sit
+            # there forever otherwise.
             self._overlay.show("Не удалось установить обновление", state="error")
             self._auto_hide_overlay(delay=3.0)
+            self._history_window.notify_update_failed(
+                "Не удалось запустить установку. Подробности в логе: "
+                "⚙ → Диагностика → Показать лог.")
             return
+
         if self._hotkey:
             self._hotkey.stop()
+
+        # Belt and braces: if the Cocoa shutdown stalls, the helper waits on
+        # our exit and the user just watches "installing…" forever. Force the
+        # exit shortly after asking politely.
+        def _force_exit():
+            time.sleep(4)
+            log.warning("Still alive after quit_application — forcing exit "
+                        "so the update helper can proceed")
+            os._exit(0)
+
+        threading.Thread(target=_force_exit, daemon=True).start()
         rumps.quit_application()
 
     def _on_update_staged(self, new_version: str) -> None:

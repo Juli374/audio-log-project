@@ -134,6 +134,13 @@ class HistoryWindow:
                 self._window.orderOut_(None)
         AppHelper.callAfter(_do)
 
+    def notify_update_failed(self, reason: str) -> None:
+        """Clear the 'installing…' state in Settings and say what went wrong."""
+        def _do():
+            self._send_response({"action": "update_status",
+                                 "status": "error", "detail": reason})
+        AppHelper.callAfter(_do)
+
     def notify_new_entry(self) -> None:
         """Notify the webview about a new transcription."""
         def _do():

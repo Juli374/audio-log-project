@@ -1222,8 +1222,20 @@ const app = {
         const btn = document.getElementById('checkUpdateBtn');
         const result = document.getElementById('updateResult');
         if (btn.dataset.mode === 'install') {
+            btn.disabled = true;
+            result.style.color = '';
             result.textContent = 'Устанавливаю, приложение перезапустится…';
             this.send('install_update');
+            // If the app is still here after this long, the restart did not
+            // happen — say so instead of showing "installing…" forever.
+            clearTimeout(this._installTimer);
+            this._installTimer = setTimeout(() => {
+                btn.disabled = false;
+                result.style.color = 'var(--danger)';
+                result.textContent = 'Перезапуск не произошёл. Закрой AudioLog '
+                    + 'через меню и открой снова — обновление уже загружено и '
+                    + 'применится при следующем запуске.';
+            }, 15000);
             return;
         }
         btn.disabled = true;
@@ -1235,15 +1247,25 @@ const app = {
         const btn = document.getElementById('checkUpdateBtn');
         const result = document.getElementById('updateResult');
         btn.disabled = false;
+        btn.style.background = '';
+        btn.style.color = '';
+        result.style.color = '';
         if (r.status === 'staged') {
             btn.dataset.mode = 'install';
-            btn.textContent = 'Установить ' + r.detail + ' и перезапустить';
-            result.textContent = 'Обновление проверено и готово';
+            btn.textContent = '↻ Перезапустить и обновить до ' + r.detail;
+            // Make it look like the action it is — this is the one button
+            // that finishes the update.
+            btn.style.background = 'var(--accent)';
+            btn.style.color = '#fff';
+            result.textContent = 'Обновление загружено и проверено';
         } else if (r.status === 'current') {
             btn.dataset.mode = '';
+            btn.textContent = 'Проверить обновления';
             result.textContent = 'Установлена последняя версия (' + r.detail + ')';
         } else {
             btn.dataset.mode = '';
+            btn.textContent = 'Проверить обновления';
+            result.style.color = 'var(--danger)';
             result.textContent = r.detail || 'Не удалось проверить обновления';
         }
     },
