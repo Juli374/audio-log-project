@@ -323,6 +323,17 @@ class HistoryWindow:
             if not translate_mods:
                 translate_key = self._config.translate_hotkey_key
                 translate_mods = self._config.translate_hotkey_mods
+            # Same rules for the screenshot shortcut.
+            screenshot_key = int(data.get(
+                "screenshot_hotkey_key", self._config.screenshot_hotkey_key))
+            screenshot_mods = (int(data.get(
+                "screenshot_hotkey_mods", self._config.screenshot_hotkey_mods))
+                & _MODIFIER_MASK)
+            if not screenshot_mods:
+                screenshot_key = self._config.screenshot_hotkey_key
+                screenshot_mods = self._config.screenshot_hotkey_mods
+            screenshot_enabled = bool(data.get(
+                "screenshot_enabled", self._config.screenshot_enabled))
 
             settings = {
                 "language": str(data.get("language", "ru")),
@@ -342,6 +353,9 @@ class HistoryWindow:
                 "translate_model": str(data.get(
                     "translate_model", self._config.translate_model)),
                 "translate_target": str(data.get("translate_target", "ru")),
+                "screenshot_enabled": screenshot_enabled,
+                "screenshot_hotkey_key": screenshot_key,
+                "screenshot_hotkey_mods": screenshot_mods,
                 "auto_update": bool(data.get("auto_update", True)),
             }
             previous_mode = self._config.transcription_mode
@@ -352,6 +366,8 @@ class HistoryWindow:
                     self._hotkey_listener.set_keycode(short_kc)
                     self._hotkey_listener.set_translate_shortcut(
                         translate_key, translate_mods)
+                    self._hotkey_listener.set_screenshot_shortcut(
+                        screenshot_key, screenshot_mods, screenshot_enabled)
                 except Exception:
                     log.exception("Failed to live-apply hotkey changes")
             # The transcriber is picked once, at startup, from the mode in

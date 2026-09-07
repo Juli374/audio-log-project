@@ -23,6 +23,7 @@ from Quartz import (
     kCGKeyboardEventKeycode,
     kCGSessionEventTap,
 )
+from system_hotkeys import SystemShortcuts
 from utils import get_logger
 
 log = get_logger(__name__)
@@ -86,6 +87,18 @@ _KEYCODE_D = 2
 
 DEFAULT_TRANSLATE_KEY = _KEYCODE_D
 DEFAULT_TRANSLATE_MODS = _FLAG_OPTION          # ⌥D
+
+# ── Screenshot shortcut ──
+# Caught by the same tap. Default ⌘⇧4 — the key everyone already presses
+# for a screenshot; system_hotkeys.py takes it away from macOS while it is
+# ours, so the system crosshair does not open next to the editor.
+_KEYCODE_4 = 21
+
+DEFAULT_SCREENSHOT_KEY = _KEYCODE_4
+DEFAULT_SCREENSHOT_MODS = _FLAG_SHIFT | _FLAG_COMMAND   # ⌘⇧4
+
+# The four real modifiers — what a recorded shortcut is compared against.
+_SHORTCUT_FLAGS = _FLAG_SHIFT | _FLAG_CONTROL | _FLAG_OPTION | _FLAG_COMMAND
 
 # Tap re-enable reasons (Quartz doesn't export these as constants).
 _TAP_DISABLED_BY_TIMEOUT = 0xFFFFFFFE
@@ -170,17 +183,25 @@ class HotkeyListener:
     """
 
     def __init__(self, config, on_activate, on_deactivate, on_cancel=None,
-                 on_translate_toggle=None):
+                 on_translate_toggle=None, on_screenshot=None):
         self._config = config
         self._on_activate = on_activate
         self._on_deactivate = on_deactivate
         self._on_cancel = on_cancel
         self._on_translate_toggle = on_translate_toggle
+        self._on_screenshot = on_screenshot
         self._keycode = getattr(config, "hotkey_keycode", _RIGHT_OPTION_KEYCODE)
         self._translate_key = getattr(
             config, "translate_hotkey_key", DEFAULT_TRANSLATE_KEY)
         self._translate_mods = getattr(
             config, "translate_hotkey_mods", DEFAULT_TRANSLATE_MODS)
+        self._screenshot_key = getattr(
+            config, "screenshot_hotkey_key", DEFAULT_SCREENSHOT_KEY)
+        self._screenshot_mods = getattr(
+            config, "screenshot_hotkey_mods", DEFAULT_SCREENSHOT_MODS)
+        self._screenshot_enabled = bool(
+            getattr(config, "screenshot_enabled", True))
+        self._system_shortcuts = SystemShortcuts()
         self._pressed = False
         self._recording = False  # for toggle mode
         self._last_toggle_time = 0.0  # monotonic timestamp of last toggle action
@@ -205,7 +226,8 @@ class HotkeyListener:
             _FLAGS_CHANGED_MASK,
             self._handle_local,
         )
-        if self._on_translate_toggle is not None:
+        if (self._on_translate_toggle is not None
+                or self._on_screenshot is not None):
             self._install_translate_tap()
 
         if self._global_monitor and self._local_monitor:
@@ -297,6 +319,11 @@ class HotkeyListener:
         self._tap_retries = 0
         log.info("Translate shortcut: %s",
                  shortcut_label(self._translate_key, self._translate_mods))
+        if self._on_screenshot is not None:
+            log.info("Screenshot shortcut: %s (%s)",
+                     shortcut_label(self._screenshot_key, self._screenshot_mods),
+                     "on" if self._screenshot_enabled else "off")
+        self._sync_system_shortcut()
 
     def _schedule_tap_retry(self) -> None:
         """Try again shortly — the user may be granting the permission now."""
@@ -338,11 +365,21 @@ class HotkeyListener:
         try:
             keycode = CGEventGetIntegerValueField(
                 event, kCGKeyboardEventKeycode)
-            flags = CGEventGetFlags(event) & _MODIFIER_MASK
-            # Exact modifier match: ⌥D must not fire on ⇧⌥D, which is a
-            # different shortcut somewhere else.
-            if keycode == self._translate_key and flags == self._translate_mods:
+            # Only the four real modifiers take part in the match: ⌥D must
+            # not fire on ⇧⌥D (a different shortcut somewhere else), but it
+            # must still fire with Caps Lock or Fn on — those bits used to
+            # sneak into the comparison and the shortcut went silent.
+            flags = CGEventGetFlags(event) & _SHORTCUT_FLAGS
+            if (self._on_translate_toggle is not None
+                    and keycode == self._translate_key
+                    and flags == self._translate_mods):
                 self._fire_translate()
+                return None
+            if (self._screenshot_enabled
+                    and self._on_screenshot is not None
+                    and keycode == self._screenshot_key
+                    and flags == self._screenshot_mods):
+                self._fire_screenshot()
                 return None
         except Exception:
             log.exception("Error in event tap")
@@ -356,6 +393,48 @@ class HotkeyListener:
             AppHelper.callAfter(self._on_translate_toggle)
         except Exception:
             log.exception("Error in on_translate_toggle")
+
+    def _fire_screenshot(self) -> None:
+        log.info("Screenshot shortcut fired: %s",
+                 shortcut_label(self._screenshot_key, self._screenshot_mods))
+        try:
+            AppHelper.callAfter(self._on_screenshot)
+        except Exception:
+            log.exception("Error in on_screenshot")
+
+    @property
+    def screenshot_ready(self) -> bool:
+        """True when the screenshot shortcut is armed and switched on."""
+        return (self._tap is not None and self._screenshot_enabled
+                and self._on_screenshot is not None)
+
+    def _sync_system_shortcut(self) -> None:
+        """Hold the matching system screenshot key only while we can serve it.
+
+        Taking ⌘⇧4 away from macOS with no tap to catch it would leave the
+        key dead — so the claim follows the tap, the on/off switch and the
+        current combination, and is dropped the moment any of them goes.
+        """
+        if (self._tap is None or not self._screenshot_enabled
+                or self._on_screenshot is None):
+            self._system_shortcuts.release()
+            return
+        self._system_shortcuts.claim(self._screenshot_key, self._screenshot_mods)
+
+    def set_screenshot_shortcut(self, keycode: int, mods: int,
+                                enabled: bool = True) -> None:
+        """Live-update the screenshot shortcut. The tap stays installed."""
+        if (keycode != self._screenshot_key or mods != self._screenshot_mods
+                or bool(enabled) != self._screenshot_enabled):
+            log.info("Screenshot shortcut: %s (%s) → %s (%s)",
+                     shortcut_label(self._screenshot_key, self._screenshot_mods),
+                     "on" if self._screenshot_enabled else "off",
+                     shortcut_label(keycode, mods),
+                     "on" if enabled else "off")
+        self._screenshot_key = keycode
+        self._screenshot_mods = mods
+        self._screenshot_enabled = bool(enabled)
+        self._sync_system_shortcut()
 
     def _handle_hold(self, is_pressed):
         """Hold mode: hold key to record, release to stop."""
@@ -493,4 +572,6 @@ class HotkeyListener:
             CGEventTapEnable(self._tap, False)
             self._tap = None
             self._tap_source = None
+        # Give ⌘⇧4 (or whichever system key we held) back to macOS.
+        self._system_shortcuts.release()
         log.info("Hotkey monitors removed")

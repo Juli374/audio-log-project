@@ -214,8 +214,10 @@ def collect(config, hotkey_listener=None, transcriber=None) -> dict:
     """Build the full diagnostic picture for this machine."""
     from hotkey import shortcut_label
     from output import is_trusted
+    from screenshot import screen_capture_granted
 
     accessibility = is_trusted()
+    screen_capture = screen_capture_granted()
     tap_ready = bool(getattr(hotkey_listener, "translate_ready", False))
     has_anthropic = bool(getattr(config, "anthropic_api_key", ""))
     mode = getattr(config, "transcription_mode", "groq")
@@ -235,6 +237,12 @@ def collect(config, hotkey_listener=None, transcriber=None) -> dict:
             "" if accessibility else
             "Системные настройки → Конфиденциальность и безопасность → "
             "Универсальный доступ → включить AudioLog"),
+        _ok("Запись экрана (скриншоты)", screen_capture,
+            "разрешена" if screen_capture else "не разрешена",
+            "" if screen_capture else
+            "Системные настройки → Конфиденциальность и безопасность → "
+            "Запись экрана → включить AudioLog. Без этого на снимке "
+            "будут одни обои."),
         _ok("Перехват сочетания перевода", tap_ready,
             "работает" if tap_ready else "не поднялся",
             "" if tap_ready else
@@ -260,6 +268,10 @@ def collect(config, hotkey_listener=None, transcriber=None) -> dict:
         "shortcut": shortcut_label(
             getattr(config, "translate_hotkey_key", 2),
             getattr(config, "translate_hotkey_mods", 1 << 19)),
+        "screenshot_shortcut": shortcut_label(
+            getattr(config, "screenshot_hotkey_key", 21),
+            getattr(config, "screenshot_hotkey_mods", (1 << 17) | (1 << 20))),
+        "screenshot_enabled": bool(getattr(config, "screenshot_enabled", True)),
         "translate_model": getattr(config, "translate_model", ""),
         "translate_target": getattr(config, "translate_target", "ru"),
         "transcription_mode": mode,
@@ -278,6 +290,8 @@ def as_text(data: dict) -> str:
         f"AudioLog {data['version']} · macOS {data['macos']} · {data['arch']}",
         f"Сочетание перевода: {data['shortcut']} → {data['translate_target']}"
         f" ({data['translate_model']})",
+        f"Сочетание скриншота: {data.get('screenshot_shortcut', '—')}"
+        f"{'' if data.get('screenshot_enabled', True) else ' (выключено)'}",
         f"Расшифровка: {data['transcription_mode']}",
         "",
     ]

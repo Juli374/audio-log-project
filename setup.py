@@ -38,6 +38,8 @@ OPTIONS = {
         'utils',
         'version',
         'updater',
+        'screenshot',
+        'system_hotkeys',
     ],
     'plist': {
         'CFBundleIdentifier': 'com.audiolog.app',

@@ -83,6 +83,17 @@ class Config:
     translate_model: str = "claude-sonnet-5"
     translate_target: str = "ru"                # language to translate into
 
+    # ── Screenshot with markup ──
+    # Press the shortcut, drag out an area with the usual macOS crosshair,
+    # and the shot opens in a small editor (arrow, rectangle, line, check
+    # mark); Enter puts the result on the clipboard. Default ⌘⇧4 — the key
+    # people already press for a screenshot. While a system screenshot key
+    # is ours, macOS's own handler for it is switched off (window-server
+    # state only, given back on quit — see system_hotkeys.py).
+    screenshot_enabled: bool = True
+    screenshot_hotkey_key: int = 21             # 4
+    screenshot_hotkey_mods: int = (1 << 17) | (1 << 20)   # ⇧⌘
+
     # ── Auto-update ──
     # Only active in an installed .app bundle (see updater.py). auto_update
     # controls checking/downloading; auto_update_silent controls whether the
@@ -135,6 +146,9 @@ class Config:
             "translate_hotkey_mods": self.translate_hotkey_mods,
             "translate_model": self.translate_model,
             "translate_target": self.translate_target,
+            "screenshot_enabled": self.screenshot_enabled,
+            "screenshot_hotkey_key": self.screenshot_hotkey_key,
+            "screenshot_hotkey_mods": self.screenshot_hotkey_mods,
             "auto_update": self.auto_update,
             "auto_update_silent": self.auto_update_silent,
         }
@@ -185,6 +199,12 @@ class Config:
             self.translate_model = str(settings["translate_model"])
         if "translate_target" in settings:
             self.translate_target = str(settings["translate_target"])
+        if "screenshot_enabled" in settings:
+            self.screenshot_enabled = bool(settings["screenshot_enabled"])
+        if "screenshot_hotkey_key" in settings:
+            self.screenshot_hotkey_key = int(settings["screenshot_hotkey_key"])
+        if "screenshot_hotkey_mods" in settings:
+            self.screenshot_hotkey_mods = int(settings["screenshot_hotkey_mods"])
         if "auto_update" in settings:
             self.auto_update = bool(settings["auto_update"])
         if "auto_update_silent" in settings:

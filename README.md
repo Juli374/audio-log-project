@@ -15,6 +15,7 @@
 Возможности:
 - Русский и английский (переключение в меню)
 - Мгновенный перевод выделенного текста (двойной тап Right ⌃)
+- Скриншот с пометками (⌘⇧4): стрелка, рамка, линия, галочка — и сразу в буфер обмена
 - История транскрипций с поиском
 - Автовставка текста в активное поле (Accessibility API, fallback на Cmd+V)
 - Hold или toggle режим хоткея
@@ -197,6 +198,8 @@ bash release.sh 1.3.1
 | `recorder.py` | Запись аудио (sounddevice) |
 | `transcriber.py` | Транскрипция через API (Groq / OpenAI) + Claude-чистка и перевод |
 | `translate_popup.py` | Мгновенный перевод выделенного текста поверх окон |
+| `screenshot.py` | Скриншот с пометками: crosshair → редактор (WKWebView) → буфер обмена |
+| `system_hotkeys.py` | Забирает у macOS системный ⌘⇧4, пока он наш; возвращает при выходе |
 | `hotkey.py` | Глобальный хоткей (NSEvent), hold/toggle |
 | `output.py` | Clipboard + PasteHelper (автовставка) |
 | `PasteHelper.swift` | Нативный helper: Accessibility API → Cmd+V fallback |

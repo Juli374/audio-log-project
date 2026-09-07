@@ -16,6 +16,7 @@ from hotkey import HotkeyListener
 from output import paste_text
 from overlay import Overlay
 from recorder import Recorder
+from screenshot import ScreenshotEditor
 from transcriber import create_transcriber
 from translate_popup import TranslateController
 from updater import Updater
@@ -56,6 +57,8 @@ class MenuBarApp(rumps.App):
         self._transcriber = create_transcriber(config)
         self._overlay = Overlay()
         self._translator = TranslateController(config)
+        self._screenshot = ScreenshotEditor(
+            config, on_copied=self._on_screenshot_copied)
         self._history_window = HistoryWindow(config)
         self._history_window._recorder = self._recorder
         self._history_window._transcriber = self._transcriber
@@ -89,6 +92,8 @@ class MenuBarApp(rumps.App):
             None,
             rumps.MenuItem("🌐 Перевести выделенное",
                            callback=self._translate_menu),
+            rumps.MenuItem("📸 Скриншот с пометками",
+                           callback=self._screenshot_menu),
             None,
             rumps.MenuItem("📋 История", callback=self._show_history),
             None,
@@ -406,6 +411,48 @@ class MenuBarApp(rumps.App):
     def _translate_menu(self, _) -> None:
         self._fire_translate()
 
+    def _fire_screenshot(self) -> None:
+        """Screenshot shortcut and menu item both land here. Main thread."""
+        if not getattr(self._config, "screenshot_enabled", True):
+            return
+        from screenshot import request_screen_capture, screen_capture_granted
+        if not screen_capture_granted():
+            # A capture without this permission is a picture of the wallpaper
+            # with every window missing — say why instead of showing that.
+            log.warning("Screenshot: Screen Recording permission not granted")
+            request_screen_capture()
+            self._translator._popup.show(
+                "Для скриншотов нужно разрешение «Запись экрана» — без него "
+                "на снимке будут одни обои.\n\nСистемные настройки → "
+                "Конфиденциальность и безопасность → Запись экрана → включить "
+                "AudioLog. Если снимок после этого всё равно пустой — закрой "
+                "AudioLog через меню (Выход) и открой заново из Applications."
+            )
+            return
+        try:
+            self._screenshot.capture()
+        except Exception:
+            log.exception("screenshot capture failed")
+
+    def _screenshot_menu(self, _) -> None:
+        self._fire_screenshot()
+
+    def _on_screenshot_copied(self) -> None:
+        """The editor put the marked-up shot on the clipboard."""
+        self._cancel_auto_hide()
+        self._overlay.show("Скриншот в буфере", state="done")
+        self._auto_hide_overlay(delay=2.0)
+
+    def _on_sigterm(self, *_args) -> None:
+        """launchd stops us with SIGTERM (install, uninstall, logout).
+
+        Without a handler the process just dies, and the system screenshot
+        key we hold stays switched off until the next login. Quit the
+        normal way instead, which gives it back.
+        """
+        log.info("SIGTERM — shutting down")
+        self._quit(None)
+
     def _show_history(self, _) -> None:
         self._history_window.show()
 
@@ -633,6 +680,7 @@ class MenuBarApp(rumps.App):
             on_deactivate=self._on_deactivate,
             on_cancel=self._on_cancel,
             on_translate_toggle=self._fire_translate,
+            on_screenshot=self._fire_screenshot,
         )
         self._hotkey.start()
         # History window's settings tab needs to live-apply hotkey changes
@@ -659,5 +707,14 @@ class MenuBarApp(rumps.App):
 
         # Show history window as the main window on launch
         self._history_window.show()
+
+        # Delivered through a Mach port, so the handler runs on the main
+        # thread even while the Cocoa run loop owns it.
+        try:
+            import signal
+            from PyObjCTools import MachSignals
+            MachSignals.signal(signal.SIGTERM, self._on_sigterm)
+        except Exception:
+            log.exception("could not install SIGTERM handler")
 
         super().run(**kwargs)

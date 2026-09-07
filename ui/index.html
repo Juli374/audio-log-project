@@ -705,7 +705,7 @@ body {
         <div class="setting-label">Сочетание для перевода</div>
         <div class="setting-description">Выдели текст в любом приложении и нажми это сочетание — перевод появится по центру экрана. Нажми кнопку и набери своё сочетание: минимум один модификатор (⌘ ⌥ ⌃ ⇧) плюс клавиша</div>
         <button class="shortcut-btn" id="settingTranslateShortcut"
-                onclick="app.recordShortcut()">⌥D</button>
+                onclick="app.recordShortcut('translate')">⌥D</button>
     </div>
     <div class="setting-group">
         <div class="setting-label">Качество перевода</div>
@@ -723,6 +723,16 @@ body {
             <option value="en">English</option>
             <option value="uk">Українська</option>
         </select>
+    </div>
+    <div class="setting-group">
+        <div class="setting-label">Скриншот с пометками</div>
+        <div class="setting-description">Нажми сочетание и выдели область — снимок откроется в редакторе: стрелка, рамка, линия, галочка. Enter — и картинка с пометками уже в буфере обмена. Пока сочетание — системное (⌘⇧4), обычный скриншот macOS по нему не срабатывает; при выходе из AudioLog возвращается как был</div>
+        <select class="setting-select" id="settingScreenshotEnabled" style="margin-bottom: 8px;">
+            <option value="1">Включено</option>
+            <option value="0">Выключено</option>
+        </select>
+        <button class="shortcut-btn" id="settingScreenshotShortcut"
+                onclick="app.recordShortcut('screenshot')">⇧⌘4</button>
     </div>
     <div class="setting-group">
         <div class="setting-label">Макс. время записи</div>
@@ -828,7 +838,8 @@ const app = {
         const el = document.getElementById('diagList');
         if (!el || !d) return;
 
-        const head = `AudioLog ${d.version} · macOS ${d.macos} · ${d.arch} · сочетание ${d.shortcut}`;
+        const head = `AudioLog ${d.version} · macOS ${d.macos} · ${d.arch} · перевод ${d.shortcut}`
+            + (d.screenshot_shortcut ? ` · скриншот ${d.screenshot_shortcut}` : '');
         const rows = d.checks.map(c => {
             const cls = c.ok ? 'diag-ok' : 'diag-bad';
             const mark = c.ok ? '✓' : '✕';
@@ -1060,13 +1071,16 @@ const app = {
         }
     },
 
-    // ─── Translate shortcut recorder ───
+    // ─── Shortcut recorder ───
     // The user presses the combination they want and we store it as a
     // macOS virtual keycode plus a modifier mask, the same pair the
-    // event tap compares against.
+    // event tap compares against. Two shortcuts share the recorder:
+    // translate (⌥D) and screenshot (⇧⌘4).
 
-    translateKey: 2,          // D
-    translateMods: 524288,    // Option
+    shortcuts: {
+        translate:  { key: 2,  mods: 524288,  el: 'settingTranslateShortcut' },
+        screenshot: { key: 21, mods: 1179648, el: 'settingScreenshotShortcut' },
+    },
     _recording: false,
 
     // Browser KeyboardEvent.code → macOS virtual keycode.
@@ -1103,15 +1117,18 @@ const app = {
         return out + this.keyName(key);
     },
 
-    renderShortcut() {
-        const btn = document.getElementById('settingTranslateShortcut');
-        if (btn) btn.textContent = this.shortcutLabel(this.translateKey, this.translateMods);
+    renderShortcuts() {
+        for (const sc of Object.values(this.shortcuts)) {
+            const btn = document.getElementById(sc.el);
+            if (btn) btn.textContent = this.shortcutLabel(sc.key, sc.mods);
+        }
     },
 
-    recordShortcut() {
-        if (this._recording) return;
+    recordShortcut(name = 'translate') {
+        const sc = this.shortcuts[name];
+        if (!sc || this._recording) return;
         this._recording = true;
-        const btn = document.getElementById('settingTranslateShortcut');
+        const btn = document.getElementById(sc.el);
         btn.classList.add('recording');
         btn.textContent = 'Нажми сочетание…';
 
@@ -1119,7 +1136,7 @@ const app = {
             this._recording = false;
             btn.classList.remove('recording');
             document.removeEventListener('keydown', onKey, true);
-            this.renderShortcut();
+            this.renderShortcuts();
         };
 
         const onKey = (e) => {
@@ -1140,8 +1157,8 @@ const app = {
                 return;
             }
 
-            this.translateKey = code;
-            this.translateMods = mods;
+            sc.key = code;
+            sc.mods = mods;
             finish();
         };
 
@@ -1154,9 +1171,13 @@ const app = {
         document.getElementById('settingLanguage').value = s.language || 'ru';
         document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
         document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
-        this.translateKey = (s.translate_hotkey_key ?? 2);
-        this.translateMods = (s.translate_hotkey_mods ?? 524288);
-        this.renderShortcut();
+        this.shortcuts.translate.key = (s.translate_hotkey_key ?? 2);
+        this.shortcuts.translate.mods = (s.translate_hotkey_mods ?? 524288);
+        this.shortcuts.screenshot.key = (s.screenshot_hotkey_key ?? 21);
+        this.shortcuts.screenshot.mods = (s.screenshot_hotkey_mods ?? 1179648);
+        this.renderShortcuts();
+        document.getElementById('settingScreenshotEnabled').value =
+            (s.screenshot_enabled === false) ? '0' : '1';
         document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
         document.getElementById('settingTranslateModel').value = s.translate_model || 'claude-sonnet-5';
         document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
@@ -1182,8 +1203,11 @@ const app = {
             language: document.getElementById('settingLanguage').value,
             hotkey_mode: document.getElementById('settingHotkeyMode').value,
             hotkey_keycode: shortKc,
-            translate_hotkey_key: this.translateKey,
-            translate_hotkey_mods: this.translateMods,
+            translate_hotkey_key: this.shortcuts.translate.key,
+            translate_hotkey_mods: this.shortcuts.translate.mods,
+            screenshot_enabled: document.getElementById('settingScreenshotEnabled').value === '1',
+            screenshot_hotkey_key: this.shortcuts.screenshot.key,
+            screenshot_hotkey_mods: this.shortcuts.screenshot.mods,
             translate_target: document.getElementById('settingTranslateTarget').value,
             translate_model: document.getElementById('settingTranslateModel').value,
             max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
