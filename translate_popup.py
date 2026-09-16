@@ -52,7 +52,12 @@ from Quartz import (
 )
 
 import transcriber
-from output import is_trusted, request_accessibility
+from output import (
+    is_trusted,
+    request_accessibility,
+    restore_pasteboard,
+    snapshot_pasteboard,
+)
 from utils import get_logger
 
 log = get_logger(__name__)
@@ -165,11 +170,14 @@ def grab_selected_text() -> str:
     them whatever they had copied. We watch NSPasteboard's changeCount
     instead of sleeping a fixed amount: apps answer ⌘C at wildly different
     speeds, and a stale read would translate the previous clipboard.
+
+    The snapshot keeps every flavour, not just the text one: a screenshot
+    on the clipboard has no text to remember, and used to be lost for good.
     """
     waited = _wait_for_modifier_release()
 
     pb = NSPasteboard.generalPasteboard()
-    previous = pb.stringForType_(NSPasteboardTypeString)
+    previous = snapshot_pasteboard(pb)
     before = pb.changeCount()
 
     _post_cmd_c()
@@ -193,9 +201,10 @@ def grab_selected_text() -> str:
         # after the copy completes, and clobbering it instantly can race.
         def _restore():
             time.sleep(0.15)
-            pb2 = NSPasteboard.generalPasteboard()
-            pb2.clearContents()
-            pb2.setString_forType_(previous, NSPasteboardTypeString)
+            try:
+                restore_pasteboard(NSPasteboard.generalPasteboard(), previous)
+            except Exception:
+                log.exception("could not restore the clipboard")
 
         threading.Thread(target=_restore, daemon=True).start()
 
