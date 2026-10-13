@@ -130,6 +130,15 @@ def _copy_to_clipboard(text: str) -> bool:
     return bool(pb.setString_forType_(text, NSPasteboardTypeString))
 
 
+def copy_text(text: str) -> bool:
+    """Put text on the clipboard for the user to paste — an explicit hand-over.
+
+    Unlike a dictation this replaces whatever was there: it only happens
+    when the user asked for this text.
+    """
+    return _copy_to_clipboard(text)
+
+
 def _post_cmd_v() -> None:
     """Synthesize ⌘V at the HID event tap. Requires Accessibility."""
     # Using a None source (default) — macOS attributes events to our process,

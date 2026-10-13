@@ -1,6 +1,13 @@
-"""History window using NSWindow + WKWebView."""
+"""History window: a native toolbar over a WKWebView.
+
+The toolbar is real AppKit — the История/Настройки switch and the search
+field — so the window looks and behaves like any other macOS 26 window;
+the list and the settings are HTML (ui/index.html). The window subtitle
+carries the totals.
+"""
 
 import json
+import threading
 
 import objc
 import AppKit
@@ -9,10 +16,95 @@ import WebKit
 from PyObjCTools import AppHelper
 
 import db
+import languages
 from config import Config
 from utils import get_logger
 
 log = get_logger(__name__)
+
+_TOOLBAR_ID = "AudioLogHistoryToolbar"
+_ITEM_TABS = "audiolog.tabs"
+_ITEM_SEARCH = "audiolog.search"
+_TABS = ("history", "settings")
+
+
+def _plural(n: int, forms: tuple[str, str, str]) -> str:
+    """Russian plural: (запись, записи, записей)."""
+    n = abs(n) % 100
+    if 11 <= n <= 14:
+        return forms[2]
+    return {1: forms[0], 2: forms[1], 3: forms[1], 4: forms[1]}.get(n % 10, forms[2])
+
+
+def stats_line(stats: dict) -> str:
+    """'9 257 записей · сегодня 33 · 76 ч 29 мин' — the window subtitle."""
+    total = int(stats.get("total") or 0)
+    today = int(stats.get("today") or 0)
+    seconds = int(round(stats.get("total_duration") or 0))
+    hours, minutes = seconds // 3600, seconds % 3600 // 60
+    if hours:
+        spoken = f"{hours} ч {minutes} мин"
+    elif minutes:
+        spoken = f"{minutes} мин"
+    else:
+        spoken = f"{seconds} сек"
+    count = f"{total:,}".replace(",", " ")
+    return (f"{count} {_plural(total, ('запись', 'записи', 'записей'))}"
+            f" · сегодня {today} · {spoken}")
+
+
+class _Toolbar(AppKit.NSObject):
+    """NSToolbar delegate: the section switch and the search field."""
+
+    def initWithOwner_(self, owner):
+        self = objc.super(_Toolbar, self).init()
+        if self is None:
+            return None
+        self._owner = owner
+        self.tabs = None
+        self.search = None
+        return self
+
+    def toolbarAllowedItemIdentifiers_(self, toolbar):
+        return [_ITEM_TABS, _ITEM_SEARCH,
+                AppKit.NSToolbarFlexibleSpaceItemIdentifier]
+
+    def toolbarDefaultItemIdentifiers_(self, toolbar):
+        # Switch and search sit together on the right, leaving the left to
+        # the title and the totals under it.
+        return [AppKit.NSToolbarFlexibleSpaceItemIdentifier, _ITEM_TABS,
+                _ITEM_SEARCH]
+
+    def toolbar_itemForItemIdentifier_willBeInsertedIntoToolbar_(
+            self, toolbar, identifier, flag):
+        if identifier == _ITEM_TABS:
+            control = AppKit.NSSegmentedControl.segmentedControlWithLabels_trackingMode_target_action_(
+                ["История", "Настройки"], AppKit.NSSegmentSwitchTrackingSelectOne,
+                self, "tabChanged:")
+            control.setSelectedSegment_(0)
+            item = AppKit.NSToolbarItem.alloc().initWithItemIdentifier_(identifier)
+            item.setView_(control)
+            item.setLabel_("Раздел")
+            self.tabs = control
+            return item
+        if identifier == _ITEM_SEARCH:
+            item = AppKit.NSSearchToolbarItem.alloc().initWithItemIdentifier_(identifier)
+            field = item.searchField()
+            field.setPlaceholderString_("Поиск")
+            field.setTarget_(self)
+            field.setAction_("searchChanged:")
+            if hasattr(item, "setPreferredWidthForSearchField_"):
+                item.setPreferredWidthForSearchField_(170.0)
+            self.search = item
+            return item
+        return None
+
+    def tabChanged_(self, sender):
+        index = int(sender.selectedSegment())
+        self._owner.select_tab(_TABS[index] if 0 <= index < len(_TABS) else "history")
+
+    def searchChanged_(self, sender):
+        self._owner.search(str(sender.stringValue() or ""))
 
 
 class MessageHandler(AppKit.NSObject):
@@ -51,8 +143,12 @@ class HistoryWindow:
         self._updater = None           # set by MenuBarApp after updater.start()
         self._install_update_cb = None  # MenuBarApp quits the app, then swaps
         self._rebuild_transcriber_cb = None  # MenuBarApp owns the transcriber
+        self._settings_saved_cb = None  # MenuBarApp refreshes its menu
         self._voice_recording = False
         self._voice_target = None  # 'note' or 'task'
+        self._toolbar = None
+        self._tab = "history"
+        self._stats_line = ""
 
     def _rebuild_transcriber(self) -> None:
         """Swap in a transcriber for the newly-chosen mode."""
@@ -73,7 +169,7 @@ class HistoryWindow:
             return
 
         # Window
-        rect = AppKit.NSMakeRect(0, 0, 600, 700)
+        rect = AppKit.NSMakeRect(0, 0, 800, 780)
         style = (
             AppKit.NSWindowStyleMaskTitled
             | AppKit.NSWindowStyleMaskClosable
@@ -83,10 +179,22 @@ class HistoryWindow:
         self._window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, style, AppKit.NSBackingStoreBuffered, False
         )
-        self._window.setTitle_("AudioLog — История")
-        self._window.setMinSize_(AppKit.NSMakeSize(400, 400))
+        self._window.setTitle_("AudioLog")
+        self._window.setContentMinSize_(AppKit.NSMakeSize(600, 420))
         self._window.center()
         self._window.setReleasedWhenClosed_(False)
+
+        # Native toolbar: title and totals on the left, the section switch
+        # and search on the right — the standard macOS 26 window.
+        self._toolbar = _Toolbar.alloc().initWithOwner_(self)
+        toolbar = AppKit.NSToolbar.alloc().initWithIdentifier_(_TOOLBAR_ID)
+        toolbar.setDelegate_(self._toolbar)
+        toolbar.setDisplayMode_(AppKit.NSToolbarDisplayModeIconOnly)
+        toolbar.setAllowsUserCustomization_(False)
+        self._window.setToolbar_(toolbar)
+        if hasattr(self._window, "setToolbarStyle_"):
+            self._window.setToolbarStyle_(AppKit.NSWindowToolbarStyleUnified)
+        self._window.setFrameAutosaveName_("AudioLogHistoryWindow")
 
         # WKWebView config
         wk_config = WebKit.WKWebViewConfiguration.alloc().init()
@@ -98,13 +206,14 @@ class HistoryWindow:
         # Allow file:// access
         wk_config.preferences().setValue_forKey_(True, "allowFileAccessFromFileURLs")
 
+        content = self._window.contentView()
         self._webview = WebKit.WKWebView.alloc().initWithFrame_configuration_(
-            rect, wk_config
+            content.bounds(), wk_config
         )
         self._webview.setAutoresizingMask_(
             AppKit.NSViewWidthSizable | AppKit.NSViewHeightSizable
         )
-        self._window.contentView().addSubview_(self._webview)
+        content.addSubview_(self._webview)
 
         # Load HTML
         from utils import resource_path
@@ -125,6 +234,47 @@ class HistoryWindow:
             AppKit.NSApp.activateIgnoringOtherApps_(True)
             # Refresh data
             self._eval_js("app.onNewEntry()")
+        AppHelper.callAfter(_do)
+
+    # -- toolbar --
+
+    def select_tab(self, tab: str) -> None:
+        """The toolbar switch (or the page) picked a section. Main thread."""
+        self._tab = tab if tab in _TABS else "history"
+        if self._toolbar is not None:
+            if self._toolbar.tabs is not None:
+                self._toolbar.tabs.setSelectedSegment_(_TABS.index(self._tab))
+            if self._toolbar.search is not None:
+                on_history = self._tab == "history"
+                self._toolbar.search.setEnabled_(on_history)
+                self._toolbar.search.searchField().setEnabled_(on_history)
+        self._update_subtitle()
+        self._eval_js(f"app.switchTab({json.dumps(self._tab)})")
+
+    def search(self, query: str) -> None:
+        """The toolbar search field changed. Main thread."""
+        self._eval_js(f"app.onSearch({json.dumps(query)})")
+
+    def _focus_search(self) -> None:
+        if self._toolbar is not None and self._toolbar.search is not None:
+            if self._tab != "history":
+                self.select_tab("history")
+            self._toolbar.search.beginSearchInteraction()
+
+    def _update_subtitle(self) -> None:
+        if self._window is None or not hasattr(self._window, "setSubtitle_"):
+            return
+        if self._tab == "settings":
+            from version import current as current_version
+            self._window.setSubtitle_(f"Настройки · версия {current_version()}")
+        else:
+            self._window.setSubtitle_(self._stats_line)
+
+    def notify_settings_changed(self) -> None:
+        """Settings changed outside the window (the menu): reload the form."""
+        def _do():
+            if self._webview is not None:
+                self._eval_js("app.send('get_settings')")
         AppHelper.callAfter(_do)
 
     def hide(self) -> None:
@@ -185,7 +335,20 @@ class HistoryWindow:
 
         elif action == "get_stats":
             stats = db.get_stats()
+            self._stats_line = stats_line(stats)
+            self._update_subtitle()
             self._send_response({"action": "stats", "data": stats})
+
+        elif action == "switch_tab":
+            self.select_tab(str(data.get("tab", "history")))
+
+        elif action == "focus_search":
+            self._focus_search()
+
+        elif action == "translate_entry":
+            self._translate_entry(int(data.get("id", 0)),
+                                  str(data.get("lang", "")),
+                                  str(data.get("purpose", "")))
 
         elif action == "update_entry":
             row_id = int(data.get("id", 0))
@@ -305,6 +468,13 @@ class HistoryWindow:
         elif action == "save_settings":
             from hotkey import MODIFIER_KEY_FLAGS, _MODIFIER_MASK
 
+            # The page saves as you change things and may send only the
+            # fields it touched: anything missing keeps its current value.
+            cfg = self._config
+
+            def pick(key, cast, current):
+                return cast(data[key]) if key in data else current
+
             short_kc = int(data.get(
                 "hotkey_keycode", self._config.hotkey_keycode))
             # Reject unknown / conflicting keycodes — fall back silently
@@ -336,27 +506,32 @@ class HistoryWindow:
                 "screenshot_enabled", self._config.screenshot_enabled))
 
             settings = {
-                "language": str(data.get("language", "ru")),
-                "max_recording_seconds": int(data.get("max_recording_seconds", 300)),
-                "hotkey_mode": str(data.get("hotkey_mode", "hold")),
+                "language": pick("language", str, cfg.language),
+                "max_recording_seconds": pick(
+                    "max_recording_seconds", int, cfg.max_recording_seconds),
+                "hotkey_mode": pick("hotkey_mode", str, cfg.hotkey_mode),
                 "hotkey_keycode": short_kc,
-                "transcription_mode": str(data.get("transcription_mode", "groq")),
-                "openai_api_key": str(data.get("openai_api_key", "")),
-                "openai_model": str(data.get("openai_model", "gpt-4o-mini-transcribe")),
-                "groq_api_key": str(data.get("groq_api_key", "")),
-                "groq_model": str(data.get("groq_model", "whisper-large-v3-turbo")),
-                "anthropic_api_key": str(data.get("anthropic_api_key", "")),
-                "cleanup_mode": str(data.get("cleanup_mode", "off")),
-                "target_language": str(data.get("target_language", "")),
+                "transcription_mode": pick(
+                    "transcription_mode", str, cfg.transcription_mode),
+                "openai_api_key": pick("openai_api_key", str, cfg.openai_api_key),
+                "openai_model": pick("openai_model", str, cfg.openai_model),
+                "groq_api_key": pick("groq_api_key", str, cfg.groq_api_key),
+                "groq_model": pick("groq_model", str, cfg.groq_model),
+                "anthropic_api_key": pick(
+                    "anthropic_api_key", str, cfg.anthropic_api_key),
+                "cleanup_mode": pick("cleanup_mode", str, cfg.cleanup_mode),
+                "target_language": pick(
+                    "target_language", str, cfg.target_language),
                 "translate_hotkey_key": translate_key,
                 "translate_hotkey_mods": translate_mods,
-                "translate_model": str(data.get(
-                    "translate_model", self._config.translate_model)),
-                "translate_target": str(data.get("translate_target", "ru")),
+                "translate_model": pick(
+                    "translate_model", str, cfg.translate_model),
+                "translate_target": pick(
+                    "translate_target", str, cfg.translate_target),
                 "screenshot_enabled": screenshot_enabled,
                 "screenshot_hotkey_key": screenshot_key,
                 "screenshot_hotkey_mods": screenshot_mods,
-                "auto_update": bool(data.get("auto_update", True)),
+                "auto_update": pick("auto_update", bool, cfg.auto_update),
             }
             previous_mode = self._config.transcription_mode
             self._config.save_settings(settings)
@@ -376,6 +551,11 @@ class HistoryWindow:
             # its key — exactly the "wrong key" symptom.
             if self._config.transcription_mode != previous_mode:
                 self._rebuild_transcriber()
+            if self._settings_saved_cb is not None:
+                try:
+                    self._settings_saved_cb()
+                except Exception:
+                    log.exception("settings-saved callback failed")
             self._send_response({"action": "settings_saved"})
 
         elif action == "test_api":
@@ -405,3 +585,35 @@ class HistoryWindow:
                 AppHelper.callAfter(_respond)
 
             threading.Thread(target=_test_groq, daemon=True).start()
+
+    # -- translation from the history --
+
+    def _translate_entry(self, row_id: int, lang: str, purpose: str) -> None:
+        """An entry in another language, for the page; copied when asked.
+
+        Runs off the main thread — a fresh translation is a Claude call.
+        Cheap answers (the original, a cached translation) come back at
+        once, see languages.convert.
+        """
+        def _work():
+            reply = {"action": "entry_translation", "id": row_id,
+                     "lang": lang, "purpose": purpose}
+            try:
+                if lang not in languages.LANGS:
+                    raise RuntimeError("неизвестный язык")
+                entry = db.get_entry(row_id)
+                if entry is None:
+                    raise RuntimeError("запись уже удалена")
+                reply["text"] = languages.convert(entry, lang, self._config)
+            except Exception as e:
+                log.exception("Could not translate entry %s into %s", row_id, lang)
+                reply["error"] = str(e)
+
+            def _respond():
+                if purpose == "copy" and reply.get("text"):
+                    from output import copy_text
+                    reply["copied"] = copy_text(reply["text"])
+                self._send_response(reply)
+            AppHelper.callAfter(_respond)
+
+        threading.Thread(target=_work, daemon=True, name="entry-translate").start()

@@ -59,6 +59,65 @@ class PngMetadataTests(unittest.TestCase):
         # 1x shots are left untouched.
         self.assertIs(stamp_scale(bare, 1.0), bare)
 
+    def test_stamp_scale_replaces_an_existing_dpi(self):
+        from screenshot import png_scale, stamp_scale
+        stamped = stamp_scale(_png(6, 4, 72), 2.0)
+        self.assertEqual(png_scale(stamped), 2.0)
+        self.assertEqual([k for k, _ in _chunks(stamped)].count(b"pHYs"), 1)
+
+    def test_stamp_scale_keeps_colour_and_pixels(self):
+        """The washed-out paste: the canvas's sRGB chunk must survive.
+
+        The editor's PNG comes from WebKit, which tags it sRGB. The old
+        NSBitmapImageRep round trip replaced that with gAMA 2.2 (inverted),
+        and Chromium-based apps rendered the result faded.
+        """
+        from screenshot import stamp_scale
+        canvas = _webkit_like_png()
+        before = dict(_chunks(canvas))
+        self.assertIn(b"sRGB", before)
+
+        after = _chunks(stamp_scale(canvas, 2.0))
+        kinds = [k for k, _ in after]
+        self.assertIn(b"sRGB", kinds)
+        self.assertNotIn(b"gAMA", kinds)
+        self.assertLess(kinds.index(b"pHYs"), kinds.index(b"IDAT"))
+        idat = b"".join(body for k, body in after if k == b"IDAT")
+        self.assertEqual(idat, before[b"IDAT"])
+
+    def test_stamp_scale_leaves_broken_input_alone(self):
+        from screenshot import stamp_scale
+        self.assertEqual(stamp_scale(b"not a png", 2.0), b"not a png")
+        cut = _png(6, 4, None)[:40]
+        self.assertEqual(stamp_scale(cut, 2.0), cut)
+
+
+def _chunks(png: bytes) -> list[tuple[bytes, bytes]]:
+    out, pos = [], 8
+    while pos + 12 <= len(png):
+        n = struct.unpack(">I", png[pos:pos + 4])[0]
+        out.append((png[pos + 4:pos + 8], png[pos + 8:pos + 8 + n]))
+        pos += 12 + n
+    return out
+
+
+def _webkit_like_png() -> bytes:
+    """Encode an sRGB bitmap with ImageIO, the way WebKit's toDataURL does."""
+    import Foundation
+    import Quartz
+    w = h = 8
+    cs = Quartz.CGColorSpaceCreateWithName(Quartz.kCGColorSpaceSRGB)
+    ctx = Quartz.CGBitmapContextCreate(
+        None, w, h, 8, w * 4, cs, Quartz.kCGImageAlphaPremultipliedLast)
+    Quartz.CGContextSetRGBFillColor(ctx, 1.0, 0.23, 0.19, 1.0)
+    Quartz.CGContextFillRect(ctx, Quartz.CGRectMake(0, 0, w, h))
+    data = Foundation.NSMutableData.data()
+    dest = Quartz.CGImageDestinationCreateWithData(data, "public.png", 1, None)
+    Quartz.CGImageDestinationAddImage(
+        dest, Quartz.CGBitmapContextCreateImage(ctx), None)
+    Quartz.CGImageDestinationFinalize(dest)
+    return bytes(data)
+
 
 class SystemShortcutMappingTests(unittest.TestCase):
     def test_screenshot_keys_map_to_symbolic_ids(self):

@@ -5,529 +5,420 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>AudioLog</title>
 <style>
+/* macOS 26 look: white window, soft grey groups, system colours.
+   The values match NSColor on macOS 26 (measured); where WebKit exposes the
+   live system colour (-apple-system-*), that wins — it follows the accent
+   colour and contrast settings the user picked. */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
+    color-scheme: light dark;
     --bg: #ffffff;
-    --bg-secondary: #f5f5f7;
-    --bg-card: #ffffff;
-    --text: #1d1d1f;
-    --text-secondary: #86868b;
-    --border: #d2d2d7;
-    --accent: #0071e3;
-    --accent-hover: #0077ed;
-    --danger: #ff3b30;
-    --danger-hover: #ff453a;
-    --shadow: rgba(0,0,0,0.08);
-    --success: #30d158;
+    --sheet: #ffffff;
+    --group: rgba(0, 0, 0, 0.047);
+    --hover: rgba(0, 0, 0, 0.045);
+    --press: rgba(0, 0, 0, 0.08);
+    --label: rgba(0, 0, 0, 0.847);
+    --label-2: rgba(0, 0, 0, 0.498);
+    --label-3: rgba(0, 0, 0, 0.259);
+    --separator: rgba(0, 0, 0, 0.098);
+    --accent: #007aff;
+    --red: #ff383c;
+    --green: #28a745;
+    --orange: #ff8d28;
+    --mark: rgba(255, 204, 0, 0.45);
+    --shadow: 0 18px 50px rgba(0, 0, 0, 0.18), 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+    --toast: rgba(30, 30, 30, 0.88);
+    --toast-text: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
     :root {
-        --bg: #1d1d1f;
-        --bg-secondary: #2c2c2e;
-        --bg-card: #2c2c2e;
-        --text: #f5f5f7;
-        --text-secondary: #86868b;
-        --border: #424245;
-        --accent: #0a84ff;
-        --accent-hover: #409cff;
-        --danger: #ff453a;
-        --danger-hover: #ff6961;
-        --shadow: rgba(0,0,0,0.3);
-        --success: #30d158;
+        --bg: #1e1e1e;
+        --sheet: #2a2a2a;
+        --group: rgba(255, 255, 255, 0.047);
+        --hover: rgba(255, 255, 255, 0.055);
+        --press: rgba(255, 255, 255, 0.09);
+        --label: rgba(255, 255, 255, 0.847);
+        --label-2: rgba(255, 255, 255, 0.549);
+        --label-3: rgba(255, 255, 255, 0.247);
+        --separator: rgba(255, 255, 255, 0.098);
+        --red: #ff4245;
+        --green: #30d158;
+        --orange: #ff9230;
+        --mark: rgba(255, 214, 10, 0.35);
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(255, 255, 255, 0.12);
+        --toast: rgba(60, 60, 60, 0.92);
     }
 }
 
+@supports (color: -apple-system-label) {
+    :root {
+        --label: -apple-system-label;
+        --label-2: -apple-system-secondary-label;
+        --label-3: -apple-system-tertiary-label;
+        --separator: -apple-system-separator;
+        --accent: -apple-system-control-accent;
+    }
+}
+
+html, body { background: var(--bg); }
+
 body {
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
+    font: 13px/1.45 system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--label);
     -webkit-font-smoothing: antialiased;
     user-select: none;
+    -webkit-user-select: none;
     overflow-x: hidden;
+    accent-color: var(--accent);
 }
 
-/* Header */
-.header {
+.page { display: none; padding: 14px 22px 40px; max-width: 820px; margin: 0 auto; }
+.page.active { display: block; }
+
+/* ── History ─────────────────────────────────────────────── */
+
+.day { margin-bottom: 18px; }
+
+.day-title {
     position: sticky;
     top: 0;
-    z-index: 100;
+    z-index: 5;
+    padding: 6px 4px 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--label-2);
     background: var(--bg);
-    border-bottom: 1px solid var(--border);
-    padding: 16px 20px;
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
 }
 
-.header-top {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 12px;
-}
-
-.header h1 {
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.3px;
-}
-
-.tabs {
-    display: flex;
-    gap: 3px;
-}
-
-.tab {
-    padding: 5px 10px;
-    border-radius: 8px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: inherit;
-}
-
-.tab:hover {
-    background: var(--bg-secondary);
-    color: var(--text);
-}
-
-.tab.active {
-    background: var(--accent);
-    color: #fff;
-}
-
-.tab-settings {
-    font-size: 16px;
-}
-
-.search-box {
-    position: relative;
-}
-
-.search-box input {
-    width: 100%;
-    padding: 10px 14px 10px 36px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-secondary);
-    color: var(--text);
-    font-size: 14px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s;
-}
-
-.search-box input:focus {
-    border-color: var(--accent);
-}
-
-.search-box::before {
-    content: "\1F50D";
-    position: absolute;
-    left: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 14px;
-    opacity: 0.5;
-}
-
-/* Stats */
-.stats {
-    display: flex;
-    gap: 12px;
-    padding: 16px 20px;
-}
-
-.stat-card {
-    flex: 1;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
+.group {
+    background: var(--group);
     border-radius: 12px;
-    padding: 14px 16px;
-}
-
-.stat-value {
-    font-size: 22px;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-}
-
-.stat-label {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-top: 2px;
-}
-
-/* Entry list */
-.entries {
-    padding: 0 20px 20px;
+    overflow: hidden;
 }
 
 .entry {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 14px 16px;
-    margin-bottom: 8px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
+    position: relative;
+    display: grid;
+    grid-template-columns: 46px 1fr auto;
+    gap: 0 12px;
+    padding: 10px 12px 10px 14px;
+    cursor: default;
 }
-
-.entry:hover {
-    border-color: var(--accent);
-    box-shadow: 0 2px 8px var(--shadow);
+.entry + .entry::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 72px;
+    right: 0;
+    border-top: 1px solid var(--separator);
 }
-
-.entry:active {
-    transform: scale(0.99);
-}
-
-.entry-content {
-    flex: 1;
-    min-width: 0;
-}
+.entry:hover { background: var(--hover); }
+.entry:active { background: var(--press); }
 
 .entry-time {
     font-size: 12px;
-    color: var(--text-secondary);
-    margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+    color: var(--label-2);
+    padding-top: 1px;
 }
 
+.entry-body { min-width: 0; }
+
 .entry-text {
-    font-size: 14px;
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     word-break: break-word;
-    user-select: text;
+}
+
+.entry-text mark {
+    background: var(--mark);
+    color: inherit;
+    border-radius: 3px;
+    padding: 0 1px;
+}
+
+.entry-translation {
+    display: flex;
+    gap: 7px;
+    align-items: baseline;
+    margin-top: 5px;
+    color: var(--label-2);
+}
+.entry-translation .tr-text {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+}
+
+.entry-side {
+    display: flex;
+    align-items: flex-start;
+    gap: 4px;
+    min-height: 20px;
 }
 
 .entry-meta {
     font-size: 11px;
-    color: var(--text-secondary);
-    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
+    color: var(--label-3);
+    padding-top: 2px;
+    white-space: nowrap;
 }
 
-.entry-delete {
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    border: none;
-    background: transparent;
-    color: var(--text-secondary);
-    font-size: 14px;
-    cursor: pointer;
-    display: flex;
+.entry-actions { display: none; align-items: center; gap: 3px; }
+.entry:hover .entry-actions { display: flex; }
+.entry:hover .entry-meta { display: none; }
+
+/* Language tag — the same two letters the menu shows (РУ, EN, УК). */
+.chip {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s;
-    opacity: 0;
+    min-width: 26px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 5px;
+    border: 1px solid var(--label-3);
+    background: transparent;
+    color: var(--label-2);
+    font: 600 10px/1 system-ui, -apple-system, sans-serif;
+    letter-spacing: 0.2px;
+    cursor: default;
+    flex-shrink: 0;
+}
+.chip:hover { border-color: var(--label-2); color: var(--label); }
+.chip.solid {
+    background: var(--label-2);
+    border-color: transparent;
+    color: var(--bg);
+}
+.chip.busy { animation: pulse 0.9s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+
+.icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--label-2);
+    cursor: default;
+    flex-shrink: 0;
+}
+.icon-btn:hover { background: var(--press); color: var(--label); }
+.icon-btn.danger:hover { color: var(--red); }
+.icon-btn svg { width: 15px; height: 15px; }
+
+.loader {
+    padding: 14px;
+    text-align: center;
+    color: var(--label-3);
+    font-size: 12px;
 }
 
-.entry:hover .entry-delete {
-    opacity: 1;
+.empty {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--label-2);
 }
+.empty svg { width: 40px; height: 40px; color: var(--label-3); margin-bottom: 12px; }
+.empty-title { font-size: 15px; font-weight: 600; color: var(--label); margin-bottom: 4px; }
 
-.entry-delete:hover {
-    background: var(--danger);
-    color: #fff;
-}
+/* ── Sheet (one entry) ───────────────────────────────────── */
 
-/* Detail modal */
-.detail-overlay {
-    display: none;
+.sheet-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.4);
     z-index: 200;
-    align-items: center;
+    display: none;
+    align-items: flex-start;
     justify-content: center;
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
+    padding-top: 6vh;
+    background: rgba(0, 0, 0, 0.18);
 }
-.detail-overlay.open {
-    display: flex;
-}
-.detail-modal {
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    width: 90%;
-    max-width: 520px;
-    max-height: 80vh;
+.sheet-overlay.open { display: flex; animation: fade 0.14s ease-out; }
+@keyframes fade { from { opacity: 0; } }
+
+.sheet {
+    width: min(640px, calc(100vw - 40px));
+    max-height: 84vh;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
-    animation: modalIn 0.15s ease-out;
+    background: var(--sheet);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    animation: rise 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
-@keyframes modalIn {
-    from { opacity: 0; transform: scale(0.95); }
-    to { opacity: 1; transform: scale(1); }
-}
-.detail-header {
+@keyframes rise { from { transform: translateY(-8px) scale(0.98); opacity: 0; } }
+
+.sheet-head {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 14px 16px;
-    border-bottom: 1px solid var(--border);
+    gap: 12px;
+    padding: 16px 16px 6px 20px;
 }
-.detail-header .detail-time {
-    font-size: 12px;
-    color: var(--text-secondary);
+.sheet-when { flex: 1; color: var(--label-2); font-size: 12px; }
+
+.segmented {
+    display: inline-flex;
+    padding: 2px;
+    border-radius: 9px;
+    background: var(--group);
+    gap: 2px;
 }
-.detail-header .detail-close {
-    width: 28px;
-    height: 28px;
+.segmented button {
+    min-width: 54px;
+    height: 24px;
+    padding: 0 10px;
+    border: none;
     border-radius: 7px;
+    background: transparent;
+    color: var(--label);
+    font: 500 12px/1 system-ui, -apple-system, sans-serif;
+    cursor: default;
+}
+.segmented button:hover:not(.on) { background: var(--hover); }
+.segmented button.on {
+    background: var(--sheet);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+    font-weight: 600;
+}
+.segmented .dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-left: 5px;
+    border-radius: 50%;
+    background: var(--label-3);
+    vertical-align: 1px;
+}
+
+.sheet-langs { padding: 6px 20px 2px; display: flex; align-items: center; gap: 10px; }
+.sheet-note { color: var(--label-3); font-size: 11px; }
+
+.sheet-body { flex: 1; overflow-y: auto; padding: 10px 20px 12px; }
+.sheet-body textarea {
+    width: 100%;
+    min-height: 140px;
     border: none;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    font-size: 14px;
-    cursor: pointer;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: var(--label);
+    font: 14px/1.6 system-ui, -apple-system, sans-serif;
+    user-select: text;
+    -webkit-user-select: text;
+}
+.sheet-body textarea[readonly] { color: var(--label); }
+.sheet-body textarea.loading { color: var(--label-3); }
+
+.sheet-foot {
     display: flex;
     align-items: center;
-    justify-content: center;
-    transition: all 0.15s;
+    gap: 8px;
+    padding: 12px 16px 16px 20px;
+    border-top: 1px solid var(--separator);
 }
-.detail-header .detail-close:hover {
-    background: var(--danger);
-    color: #fff;
-}
-.detail-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 16px;
-}
-.detail-body textarea {
-    width: 100%;
-    min-height: 120px;
+.sheet-foot .spacer { flex: 1; }
+
+/* ── Buttons ─────────────────────────────────────────────── */
+
+.btn {
+    height: 26px;
+    padding: 0 14px;
+    border-radius: 13px;
     border: none;
-    background: transparent;
-    color: var(--text);
-    font-size: 14px;
-    font-family: inherit;
-    line-height: 1.6;
-    resize: vertical;
-    outline: none;
+    background: var(--press);
+    color: var(--label);
+    font: 500 13px/1 system-ui, -apple-system, sans-serif;
+    cursor: default;
+    white-space: nowrap;
 }
-.detail-footer {
+.btn:hover { filter: brightness(0.97); }
+.btn:active { filter: brightness(0.92); }
+.btn:disabled { opacity: 0.45; }
+.btn.primary { background: var(--accent); color: #fff; }
+.btn.plain { background: transparent; color: var(--accent); padding: 0 6px; }
+.btn.plain.danger { color: var(--red); }
+.btn.hidden { display: none; }
+
+/* ── Settings (System Settings style) ────────────────────── */
+
+.section { margin-bottom: 22px; }
+.section-title {
+    padding: 0 4px 7px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--label);
+}
+.section-foot {
+    padding: 7px 4px 0;
+    font-size: 11px;
+    color: var(--label-2);
+}
+
+.row {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-height: 44px;
+    padding: 8px 14px;
+}
+.row + .row::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 14px;
+    right: 14px;
+    border-top: 1px solid var(--separator);
+}
+.row.hidden { display: none; }
+.row-text { flex: 1; min-width: 0; }
+.row-title { color: var(--label); }
+.row-hint { font-size: 11px; line-height: 1.4; color: var(--label-2); margin-top: 2px; }
+.row-control {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: flex-end;
     gap: 8px;
-    padding: 12px 16px;
-    border-top: 1px solid var(--border);
+    max-width: 62%;
 }
-.detail-footer button {
-    padding: 6px 16px;
-    border-radius: 8px;
-    border: none;
+.row-control select { max-width: 280px; font-size: 13px; }
+.row-control input[type="password"],
+.row-control input[type="text"] {
+    width: 230px;
     font-size: 13px;
-    font-family: inherit;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-.detail-btn-copy {
-    background: var(--bg-secondary);
-    color: var(--text);
-}
-.detail-btn-copy:hover {
-    background: var(--border);
-}
-.detail-btn-save {
-    background: var(--accent);
-    color: #fff;
-    display: none;
-}
-.detail-btn-save.visible {
-    display: inline-block;
-}
-.detail-btn-save:hover {
-    background: var(--accent-hover);
-}
-
-/* Load more */
-.load-more {
-    display: block;
-    width: 100%;
-    padding: 12px;
-    margin-bottom: 20px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-secondary);
-    color: var(--text-secondary);
-    font-size: 13px;
-    font-family: inherit;
-    cursor: pointer;
-    transition: all 0.15s;
-}
-
-.load-more:hover {
-    background: var(--accent);
-    color: #fff;
-    border-color: var(--accent);
-}
-
-/* Empty state */
-.empty {
-    text-align: center;
-    padding: 60px 20px;
-    color: var(--text-secondary);
-}
-
-.empty-icon {
-    font-size: 48px;
-    margin-bottom: 12px;
-}
-
-.empty-text {
-    font-size: 15px;
-}
-
-/* Toast */
-.toast {
-    position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%) translateY(80px);
-    background: var(--text);
-    color: var(--bg);
-    padding: 10px 20px;
-    border-radius: 10px;
-    font-size: 13px;
-    font-weight: 500;
-    opacity: 0;
-    transition: all 0.3s;
-    z-index: 200;
-    pointer-events: none;
-}
-
-.toast.show {
-    transform: translateX(-50%) translateY(0);
-    opacity: 1;
-}
-
-/* Settings */
-.settings-page {
-    padding: 20px;
-    display: none;
-}
-
-.settings-page.active {
-    display: block;
-}
-
-.setting-group {
-    margin-bottom: 20px;
-}
-
-.setting-label {
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 6px;
-}
-
-.setting-description {
-    font-size: 12px;
-    color: var(--text-secondary);
-    margin-bottom: 8px;
-}
-
-.setting-select, .setting-input {
-    width: 100%;
-    padding: 10px 14px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-secondary);
-    color: var(--text);
-    font-size: 14px;
-    font-family: inherit;
-    outline: none;
-    transition: border-color 0.15s;
-    -webkit-appearance: none;
-}
-
-.setting-select:focus, .setting-input:focus {
-    border-color: var(--accent);
-}
-
-.setting-select {
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2386868b'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
-    padding-right: 36px;
-}
-
-.diag-list {
-    margin-top: 10px;
-    font-size: 13px;
-    line-height: 1.7;
-}
-.diag-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 3px 0;
-}
-.diag-mark {
-    flex-shrink: 0;
-    width: 18px;
-    font-weight: 700;
-}
-.diag-ok .diag-mark { color: var(--success); }
-.diag-bad .diag-mark { color: var(--danger); }
-.diag-bad .diag-name { font-weight: 600; }
-.diag-fix {
-    color: var(--text-secondary);
-    font-size: 12px;
-    margin: 2px 0 6px 26px;
-}
-.diag-problems {
-    margin-top: 12px;
-    padding: 10px 12px;
-    background: var(--bg-secondary);
-    border-radius: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--text-secondary);
-    max-height: 160px;
-    overflow-y: auto;
     user-select: text;
-    white-space: pre-wrap;
-    word-break: break-word;
+    -webkit-user-select: text;
 }
+.status-ok { color: var(--green); }
+.status-bad { color: var(--red); }
+.result { font-size: 12px; color: var(--label-2); }
 
-.shortcut-btn {
-    padding: 10px 14px;
-    min-width: 120px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    background: var(--bg-secondary);
-    color: var(--text);
-    font-family: inherit;
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-    transition: all 0.15s;
+.shortcut {
+    min-width: 92px;
+    height: 24px;
+    padding: 0 12px;
+    border-radius: 7px;
+    border: 1px solid var(--separator);
+    background: var(--bg);
+    color: var(--label);
+    font: 600 13px/1 system-ui, -apple-system, sans-serif;
+    letter-spacing: 0.6px;
+    cursor: default;
 }
-.shortcut-btn:hover {
-    border-color: var(--accent);
-}
-.shortcut-btn.recording {
+.shortcut.recording {
     border-color: var(--accent);
     background: var(--accent);
     color: #fff;
@@ -535,263 +426,357 @@ body {
     letter-spacing: 0;
 }
 
-.save-btn {
-    display: inline-block;
-    padding: 10px 24px;
-    border: none;
-    border-radius: 10px;
-    background: var(--accent);
-    color: #fff;
-    font-size: 14px;
-    font-weight: 600;
-    font-family: inherit;
-    cursor: pointer;
-    transition: background 0.15s;
+.diag-list { padding: 4px 14px 10px; font-size: 12px; line-height: 1.6; }
+.diag-head { color: var(--label-2); padding: 8px 0 6px; }
+.diag-row { display: flex; gap: 8px; padding: 2px 0; }
+.diag-mark { width: 14px; flex-shrink: 0; font-weight: 700; }
+.diag-ok .diag-mark { color: var(--green); }
+.diag-bad .diag-mark { color: var(--red); }
+.diag-bad .diag-name { font-weight: 600; }
+.diag-fix { color: var(--label-2); margin: 0 0 6px 22px; }
+.diag-problems {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--group);
+    font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--label-2);
+    max-height: 160px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+    -webkit-user-select: text;
 }
+.diag-buttons { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 14px 14px; }
 
-.save-btn:hover {
-    background: var(--accent-hover);
+/* ── Toast ───────────────────────────────────────────────── */
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 22px;
+    z-index: 300;
+    max-width: 80vw;
+    padding: 8px 16px;
+    border-radius: 18px;
+    background: var(--toast);
+    color: var(--toast-text);
+    font-size: 13px;
+    font-weight: 500;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transform: translate(-50%, 12px);
+    opacity: 0;
+    transition: opacity 0.18s, transform 0.18s;
+    pointer-events: none;
 }
-
-/* History page */
-.history-page { display: block; }
-.history-page.hidden { display: none; }
-
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
 </style>
 </head>
 <body>
 
-<div class="header">
-    <div class="header-top">
-        <h1>AudioLog</h1>
-        <div class="tabs">
-            <button class="tab active" data-tab="history" onclick="app.switchTab('history')">История</button>
-            <button class="tab tab-settings" data-tab="settings" onclick="app.switchTab('settings')">&#x2699;</button>
-        </div>
-    </div>
-    <div class="search-box" id="searchBox">
-        <input type="text" id="searchInput" placeholder="Поиск по записям…" autocomplete="off" spellcheck="false">
-    </div>
-</div>
-
 <!-- ═══ History ═══ -->
-<div class="history-page" id="historyPage">
-    <div class="stats" id="statsBar">
-        <div class="stat-card">
-            <div class="stat-value" id="statTotal">—</div>
-            <div class="stat-label">Всего записей</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" id="statToday">—</div>
-            <div class="stat-label">Сегодня</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value" id="statDuration">—</div>
-            <div class="stat-label">Общее время</div>
-        </div>
-    </div>
-    <div class="entries" id="entriesList"></div>
+<div class="page active" id="historyPage">
+    <div id="entriesList"></div>
+    <div class="loader" id="loader" hidden>Загрузка…</div>
 </div>
 
 <!-- ═══ Settings ═══ -->
-<div class="settings-page" id="settingsPage">
-    <div class="setting-group">
-        <div class="setting-label">Режим транскрипции</div>
-        <div class="setting-description">Оба режима — облачные: нужен интернет и ключ API</div>
-        <select class="setting-select" id="settingTranscriptionMode" onchange="app.onTranscriptionModeChange()">
-            <option value="groq">Groq API (быстрый)</option>
-            <option value="api">OpenAI API</option>
-        </select>
+<div class="page" id="settingsPage">
+
+    <div class="section">
+        <div class="section-title">Диктовка</div>
+        <div class="group">
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Распознавание речи</div>
+                    <div class="row-hint">Облачный сервис — нужен интернет и ключ API</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingTranscriptionMode" data-save onchange="app.onTranscriptionModeChange()">
+                        <option value="groq">Groq — быстрее</option>
+                        <option value="api">OpenAI</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row" data-mode="groq">
+                <div class="row-text">
+                    <div class="row-title">Ключ Groq</div>
+                    <div class="row-hint">console.groq.com/keys — есть бесплатный тариф</div>
+                </div>
+                <div class="row-control">
+                    <input type="password" id="settingGroqKey" data-save placeholder="gsk_…" autocomplete="off" spellcheck="false">
+                </div>
+            </div>
+            <div class="row" data-mode="groq">
+                <div class="row-text">
+                    <div class="row-title">Модель Groq</div>
+                    <div class="row-hint">Whisper на Groq LPU, $0.011/мин</div>
+                </div>
+                <div class="row-control">
+                    <span class="result" id="testGroqResult"></span>
+                    <button class="btn" id="testGroqBtn" onclick="app.testGroq()">Проверить</button>
+                    <select id="settingGroqModel" data-save>
+                        <option value="whisper-large-v3-turbo">Large V3 Turbo</option>
+                        <option value="whisper-large-v3">Large V3 — точнее</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row" data-mode="api">
+                <div class="row-text">
+                    <div class="row-title">Ключ OpenAI</div>
+                    <div class="row-hint">platform.openai.com/api-keys</div>
+                </div>
+                <div class="row-control">
+                    <input type="password" id="settingApiKey" data-save placeholder="sk-proj-…" autocomplete="off" spellcheck="false">
+                </div>
+            </div>
+            <div class="row" data-mode="api">
+                <div class="row-text">
+                    <div class="row-title">Модель OpenAI</div>
+                </div>
+                <div class="row-control">
+                    <span class="result" id="testApiResult"></span>
+                    <button class="btn" id="testApiBtn" onclick="app.testApi()">Проверить</button>
+                    <select id="settingApiModel" data-save>
+                        <option value="gpt-4o-mini-transcribe">GPT-4o Mini Transcribe — $0.003/мин</option>
+                        <option value="whisper-1">Whisper-1 — $0.006/мин</option>
+                        <option value="gpt-4o-transcribe">GPT-4o Transcribe — $0.006/мин</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Язык речи</div>
+                    <div class="row-hint">На каком языке ты говоришь</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingLanguage" data-save>
+                        <option value="ru">Русский</option>
+                        <option value="en">English</option>
+                        <option value="uk">Українська</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Вставлять на языке</div>
+                    <div class="row-hint">Если отличается от языка речи — Claude переводит перед вставкой. То же переключается в меню AudioLog</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingTargetLanguage" data-save>
+                        <option value="">Как сказано</option>
+                        <option value="en">English</option>
+                        <option value="ru">Русский</option>
+                        <option value="uk">Українська</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Корректировка через Claude</div>
+                    <div class="row-hint">Лёгкая — пунктуация и явные ошибки. Полная — ещё и слова с грамматикой</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingCleanupMode" data-save>
+                        <option value="off">Выключена</option>
+                        <option value="light">Лёгкая</option>
+                        <option value="aggressive">Полная</option>
+                    </select>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- API settings -->
-    <div id="apiSettings" style="display: none;">
-        <div class="setting-group">
-            <div class="setting-label">API ключ OpenAI</div>
-            <div class="setting-description">Получите ключ на platform.openai.com/api-keys</div>
-            <input class="setting-input" type="password" id="settingApiKey" placeholder="sk-proj-..." autocomplete="off">
-        </div>
-        <div class="setting-group">
-            <div class="setting-label">Модель API</div>
-            <div class="setting-description">Выберите модель для распознавания речи</div>
-            <select class="setting-select" id="settingApiModel">
-                <option value="gpt-4o-mini-transcribe">GPT-4o Mini Transcribe — $0.003/мин (быстрая, дешёвая)</option>
-                <option value="whisper-1">Whisper-1 — $0.006/мин (классическая)</option>
-                <option value="gpt-4o-transcribe">GPT-4o Transcribe — $0.006/мин (макс. качество)</option>
-            </select>
-        </div>
-        <div class="setting-group">
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="testApiBtn" onclick="app.testApi()">Тест подключения</button>
-            <span id="testApiResult" style="margin-left: 10px; font-size: 13px;"></span>
+    <div class="section">
+        <div class="section-title">Клавиши</div>
+        <div class="group">
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Клавиша записи</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingHotkeyKeycode" data-save>
+                        <option value="61">Правый ⌥ Option</option>
+                        <option value="58">Левый ⌥ Option</option>
+                        <option value="54">Правый ⌘ Command</option>
+                        <option value="55">Левый ⌘ Command</option>
+                        <option value="59">Левый ⌃ Control</option>
+                        <option value="60">Правый ⇧ Shift</option>
+                        <option value="56">Левый ⇧ Shift</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Как нажимать</div>
+                    <div class="row-hint">Удерживать — пишет, пока держишь. Нажать — старт и стоп отдельными нажатиями</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingHotkeyMode" data-save>
+                        <option value="hold">Удерживать</option>
+                        <option value="toggle">Нажать</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Максимум записи</div>
+                    <div class="row-hint">Дальше запись останавливается сама</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingMaxRecording" data-save>
+                        <option value="120">2 минуты</option>
+                        <option value="300">5 минут</option>
+                        <option value="600">10 минут</option>
+                        <option value="1800">30 минут</option>
+                    </select>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Groq settings -->
-    <div id="groqSettings" style="display: none;">
-        <div class="setting-group">
-            <div class="setting-label">API ключ Groq</div>
-            <div class="setting-description">Получите ключ на console.groq.com/keys (есть бесплатный тариф)</div>
-            <input class="setting-input" type="password" id="settingGroqKey" placeholder="gsk_..." autocomplete="off">
-        </div>
-        <div class="setting-group">
-            <div class="setting-label">Модель Groq</div>
-            <div class="setting-description">Whisper на Groq LPU — в ~10x быстрее OpenAI, $0.011/мин</div>
-            <select class="setting-select" id="settingGroqModel">
-                <option value="whisper-large-v3-turbo">Whisper Large V3 Turbo (рекомендуемая)</option>
-                <option value="whisper-large-v3">Whisper Large V3 (макс. качество)</option>
-            </select>
-        </div>
-        <div class="setting-group">
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="testGroqBtn" onclick="app.testGroq()">Тест подключения</button>
-            <span id="testGroqResult" style="margin-left: 10px; font-size: 13px;"></span>
+    <div class="section">
+        <div class="section-title">Перевод выделенного</div>
+        <div class="group">
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Сочетание</div>
+                    <div class="row-hint">Выдели текст в любом приложении и нажми — перевод появится по центру экрана</div>
+                </div>
+                <div class="row-control">
+                    <button class="shortcut" id="settingTranslateShortcut" onclick="app.recordShortcut('translate')">⌥D</button>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Переводить на</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingTranslateTarget" data-save>
+                        <option value="ru">Русский</option>
+                        <option value="en">English</option>
+                        <option value="uk">Українська</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Качество перевода</div>
+                    <div class="row-hint">Точный (Sonnet) правильнее берёт термины. Быстрый (Haiku) — примерно в полтора раза быстрее. Им же переводятся записи в истории</div>
+                </div>
+                <div class="row-control">
+                    <select id="settingTranslateModel" data-save>
+                        <option value="claude-sonnet-5">Точный</option>
+                        <option value="claude-haiku-4-5-20251001">Быстрый</option>
+                    </select>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Ключ Anthropic</div>
+                    <div class="row-hint">Для перевода и корректировки через Claude — console.anthropic.com</div>
+                </div>
+                <div class="row-control">
+                    <input type="password" id="settingAnthropicKey" data-save placeholder="sk-ant-…" autocomplete="off" spellcheck="false">
+                </div>
+            </div>
         </div>
     </div>
 
-    <div class="setting-group">
-        <div class="setting-label">Язык</div>
-        <div class="setting-description">Язык распознавания</div>
-        <select class="setting-select" id="settingLanguage">
-            <option value="ru">Русский</option>
-            <option value="en">English</option>
-            <option value="uk">Українська</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Anthropic API ключ</div>
-        <div class="setting-description">Нужен для перевода и/или корректировки пунктуации через Claude. Получить: console.anthropic.com</div>
-        <input class="setting-input" type="password" id="settingAnthropicKey" placeholder="sk-ant-..." autocomplete="off">
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Корректировка через Claude</div>
-        <div class="setting-description">Лёгкая — пунктуация и явные ошибки, слова не трогает. Полная — заменяет неподходящие слова и чинит грамматику для итогового корректного текста.</div>
-        <select class="setting-select" id="settingCleanupMode">
-            <option value="off">Выключено</option>
-            <option value="light">Лёгкая — только пунктуация и явные ошибки</option>
-            <option value="aggressive">Полная — корректирует слова и грамматику</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Перевод через Claude</div>
-        <div class="setting-description">Постобработка транскрипта: перевод на выбранный язык через Anthropic API. Если совпадает с языком распознавания — перевод пропускается.</div>
-        <select class="setting-select" id="settingTargetLanguage">
-            <option value="">Без перевода</option>
-            <option value="en">На английский</option>
-            <option value="ru">На русский</option>
-            <option value="uk">На украинский</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Режим хоткея</div>
-        <div class="setting-description">Зажать — держите клавишу. Нажать — нажмите для старта, ещё раз для остановки</div>
-        <select class="setting-select" id="settingHotkeyMode">
-            <option value="hold">Зажать (удерживать)</option>
-            <option value="toggle">Нажать (вкл/выкл)</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Клавиша записи (короткая диктовка)</div>
-        <div class="setting-description">Применяется сразу после сохранения, без перезапуска</div>
-        <select class="setting-select" id="settingHotkeyKeycode">
-            <option value="61">Right ⌥ (Option)</option>
-            <option value="58">Left ⌥ (Option)</option>
-            <option value="54">Right ⌘ (Command)</option>
-            <option value="55">Left ⌘ (Command)</option>
-            <option value="59">Left ⌃ (Control)</option>
-            <option value="60">Right ⇧ (Shift)</option>
-            <option value="56">Left ⇧ (Shift)</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Сочетание для перевода</div>
-        <div class="setting-description">Выдели текст в любом приложении и нажми это сочетание — перевод появится по центру экрана. Нажми кнопку и набери своё сочетание: минимум один модификатор (⌘ ⌥ ⌃ ⇧) плюс клавиша</div>
-        <button class="shortcut-btn" id="settingTranslateShortcut"
-                onclick="app.recordShortcut('translate')">⌥D</button>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Качество перевода</div>
-        <div class="setting-description">Sonnet точнее на рабочих текстах — правильно берёт термины и учитывает контекст фразы. Haiku примерно в полтора раза быстрее, но иногда путает термины</div>
-        <select class="setting-select" id="settingTranslateModel">
-            <option value="claude-sonnet-5">Точный (Sonnet)</option>
-            <option value="claude-haiku-4-5-20251001">Быстрый (Haiku)</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Язык перевода</div>
-        <div class="setting-description">На какой язык переводить выделенный текст</div>
-        <select class="setting-select" id="settingTranslateTarget">
-            <option value="ru">Русский</option>
-            <option value="en">English</option>
-            <option value="uk">Українська</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Скриншот с пометками</div>
-        <div class="setting-description">Нажми сочетание и выдели область — снимок откроется в редакторе: стрелка, рамка, линия, галочка. Enter — и картинка с пометками уже в буфере обмена. Пока сочетание — системное (⌘⇧4), обычный скриншот macOS по нему не срабатывает; при выходе из AudioLog возвращается как был</div>
-        <select class="setting-select" id="settingScreenshotEnabled" style="margin-bottom: 8px;">
-            <option value="1">Включено</option>
-            <option value="0">Выключено</option>
-        </select>
-        <button class="shortcut-btn" id="settingScreenshotShortcut"
-                onclick="app.recordShortcut('screenshot')">⇧⌘4</button>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Макс. время записи</div>
-        <div class="setting-description">Автоматическая остановка записи через указанное время</div>
-        <select class="setting-select" id="settingMaxRecording">
-            <option value="120">2 мин</option>
-            <option value="300" selected>5 мин</option>
-            <option value="600">10 мин</option>
-            <option value="1800">30 мин</option>
-        </select>
-    </div>
-    <div class="setting-group">
-        <div class="setting-label">Автовставка текста</div>
-        <div class="setting-description">macOS должна разрешить приложению нажимать клавиши — без этого текст только копируется в буфер, а ⌘V приходится жать вручную. Статус: <b id="axStatus">проверяю…</b></div>
-        <div>
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="axBtn" onclick="app.requestAccessibility()">Разрешить автовставку</button>
+    <div class="section">
+        <div class="section-title">Скриншот с пометками</div>
+        <div class="group">
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Включён</div>
+                    <div class="row-hint">Пока сочетание системное (⇧⌘4), обычный скриншот macOS по нему не срабатывает; при выходе из AudioLog возвращается</div>
+                </div>
+                <div class="row-control">
+                    <input type="checkbox" switch id="settingScreenshotEnabled" data-save>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Сочетание</div>
+                </div>
+                <div class="row-control">
+                    <button class="shortcut" id="settingScreenshotShortcut" onclick="app.recordShortcut('screenshot')">⇧⌘4</button>
+                </div>
+            </div>
         </div>
     </div>
-    <div class="setting-group">
-        <div class="setting-label">Обновления</div>
-        <div class="setting-description">Текущая версия: <b id="appVersion">—</b>. Приложение само проверяет обновления и ставит их, когда не идёт запись — переустанавливать ничего не нужно.</div>
-        <select class="setting-select" id="settingAutoUpdate">
-            <option value="1">Обновлять автоматически</option>
-            <option value="0">Не обновлять</option>
-        </select>
-        <div style="margin-top: 10px;">
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" id="checkUpdateBtn" onclick="app.checkUpdates()">Проверить обновления</button>
-            <span id="updateResult" style="margin-left: 10px; font-size: 13px;"></span>
-        </div>
-    </div>
-    <button class="save-btn" onclick="app.saveSettings()">Сохранить</button>
-    <span id="saveNote" style="margin-left: 10px; font-size: 12px; color: var(--text-secondary);">Смена режима требует перезапуска</span>
 
-    <div class="setting-group" style="margin-top: 28px; border-top: 1px solid var(--border); padding-top: 20px;">
-        <div class="setting-label">Диагностика</div>
-        <div class="setting-description">Что мешает работе на этом компьютере. Если перевод не срабатывает — смотри сюда первым делом.</div>
-        <div id="diagList" class="diag-list">проверяю…</div>
-        <div style="margin-top: 12px;">
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.runSelfTest()">Проверить запись и перевод</button>
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.copyDiagnostics()">Скопировать отчёт</button>
-            <button class="save-btn" style="background: var(--bg-secondary); color: var(--text); border: 1px solid var(--border);" onclick="app.send('open_log')">Показать лог</button>
+    <div class="section">
+        <div class="section-title">Система</div>
+        <div class="group">
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Автовставка текста</div>
+                    <div class="row-hint">Без «Универсального доступа» текст только копируется, ⌘V придётся жать самому</div>
+                </div>
+                <div class="row-control">
+                    <span id="axStatus" class="result">проверяю…</span>
+                    <button class="btn" id="axBtn" onclick="app.requestAccessibility()">Разрешить</button>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Обновлять автоматически</div>
+                    <div class="row-hint">Ставит обновление, когда не идёт запись. Версия <span id="appVersion">—</span></div>
+                </div>
+                <div class="row-control">
+                    <input type="checkbox" switch id="settingAutoUpdate" data-save>
+                </div>
+            </div>
+            <div class="row">
+                <div class="row-text">
+                    <div class="row-title">Обновления</div>
+                    <div class="row-hint" id="updateResult"></div>
+                </div>
+                <div class="row-control">
+                    <button class="btn" id="checkUpdateBtn" onclick="app.checkUpdates()">Проверить обновления</button>
+                </div>
+            </div>
         </div>
-        <div id="selfTestResult" style="margin-top: 10px; font-size: 13px;"></div>
+    </div>
+
+    <div class="section">
+        <div class="section-title">Диагностика</div>
+        <div class="group">
+            <div id="diagList" class="diag-list">проверяю…</div>
+            <div class="diag-buttons">
+                <button class="btn" onclick="app.runSelfTest()">Проверить запись и перевод</button>
+                <button class="btn" onclick="app.copyDiagnostics()">Скопировать отчёт</button>
+                <button class="btn" onclick="app.send('open_log')">Показать лог</button>
+            </div>
+        </div>
+        <div class="section-foot" id="selfTestResult">Что мешает работе на этом компьютере. Если перевод не срабатывает — смотри сюда первым делом.</div>
     </div>
 </div>
 
-<!-- Detail modal -->
-<div class="detail-overlay" id="detailOverlay" onclick="if(event.target===this)app.closeDetail()">
-    <div class="detail-modal">
-        <div class="detail-header">
-            <span class="detail-time" id="detailTime"></span>
-            <button class="detail-close" onclick="app.closeDetail()">&#x2715;</button>
+<!-- ═══ One entry ═══ -->
+<div class="sheet-overlay" id="sheet" onclick="if (event.target === this) app.closeDetail()">
+    <div class="sheet" role="dialog">
+        <div class="sheet-head">
+            <div class="sheet-when" id="detailTime"></div>
+            <button class="icon-btn" title="Закрыть (Esc)" onclick="app.closeDetail()">
+                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
         </div>
-        <div class="detail-body">
-            <textarea id="detailText" oninput="app.onDetailInput()"></textarea>
+        <div class="sheet-langs">
+            <div class="segmented" id="detailLangs"></div>
+            <span class="sheet-note" id="detailNote"></span>
         </div>
-        <div class="detail-footer">
-            <button class="detail-btn-copy" onclick="app.copyDetail()">Копировать</button>
-            <button class="detail-btn-save" id="detailSaveBtn" onclick="app.saveDetail()">Сохранить</button>
+        <div class="sheet-body">
+            <textarea id="detailText" spellcheck="false" oninput="app.onDetailInput()"></textarea>
+        </div>
+        <div class="sheet-foot">
+            <button class="btn plain danger" onclick="app.deleteDetail()">Удалить</button>
+            <div class="spacer"></div>
+            <button class="btn" id="detailCopyBtn" onclick="app.copyDetail()">Копировать</button>
+            <button class="btn primary hidden" id="detailSaveBtn" onclick="app.saveDetail()">Сохранить</button>
         </div>
     </div>
 </div>
@@ -799,216 +784,170 @@ body {
 <div class="toast" id="toast"></div>
 
 <script>
+const LANGS = ['ru', 'en', 'uk'];
+const BADGE = { ru: 'РУ', en: 'EN', uk: 'УК' };
+const IN_NAME = { ru: 'на русском', en: 'на английском', uk: 'на украинском' };
+const TO_NAME = { ru: 'на русский', en: 'на английский', uk: 'на украинский' };
+
+const ICONS = {
+    copy: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M10.5 3.6V3.5a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h.1"/></svg>',
+    trash: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M4 4.5l.7 8.6a1.5 1.5 0 0 0 1.5 1.4h3.6a1.5 1.5 0 0 0 1.5-1.4l.7-8.6"/></svg>',
+    mic: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="14" y="4" width="12" height="21" rx="6"/><path d="M8 19a12 12 0 0 0 24 0M20 31v5"/></svg>',
+};
+
 const app = {
     // History state
     entries: [],
+    byId: new Map(),
     offset: 0,
     query: '',
     hasMore: true,
+    loading: false,
     PAGE_SIZE: 50,
+    lastDayKey: null,
+    lastGroup: null,
 
-    // Detail modal state
-    detailItem: null,  // { id, text, type: 'entry' }
-    detailOriginal: '',
+    // The sheet: { entry, lang, base, original }
+    detail: null,
+    pending: new Set(),   // "id:lang" translations in flight
 
-    // Current tab
     currentTab: 'history',
 
     init() {
-        document.getElementById('searchInput').addEventListener('input',
-            this.debounce((e) => this.onSearch(e.target.value), 300));
+        document.addEventListener('keydown', e => this.onKey(e));
+        const loader = document.getElementById('loader');
+        if (window.IntersectionObserver) {
+            new IntersectionObserver(items => {
+                if (items.some(i => i.isIntersecting)) this.loadMore();
+            }, { rootMargin: '400px' }).observe(loader);
+        }
+        document.querySelectorAll('[data-save]').forEach(el => {
+            el.addEventListener('change', () => this.saveSettings());
+        });
 
         this.send('get_stats');
         this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
         this.send('get_settings');
         this.send('get_permissions');
         this.send('get_diagnostics');
-        this.switchTab('history');
-    },
-
-    // ─── Diagnostics ───
-
-    escapeHtml(s) {
-        const div = document.createElement('div');
-        div.textContent = s == null ? '' : String(s);
-        return div.innerHTML;
-    },
-
-    renderDiagnostics(d) {
-        const el = document.getElementById('diagList');
-        if (!el || !d) return;
-
-        const head = `AudioLog ${d.version} · macOS ${d.macos} · ${d.arch} · перевод ${d.shortcut}`
-            + (d.screenshot_shortcut ? ` · скриншот ${d.screenshot_shortcut}` : '');
-        const rows = d.checks.map(c => {
-            const cls = c.ok ? 'diag-ok' : 'diag-bad';
-            const mark = c.ok ? '✓' : '✕';
-            const fix = (!c.ok && c.fix)
-                ? `<div class="diag-fix">${this.escapeHtml(c.fix)}</div>` : '';
-            return `<div class="diag-row ${cls}"><span class="diag-mark">${mark}</span>`
-                 + `<span><span class="diag-name">${this.escapeHtml(c.name)}</span>`
-                 + ` — ${this.escapeHtml(c.detail)}</span></div>${fix}`;
-        }).join('');
-
-        const problems = d.problems && d.problems.length
-            ? `<div class="diag-problems">${this.escapeHtml(d.problems.join('\n'))}</div>`
-            : '';
-
-        el.innerHTML = `<div class="diag-fix" style="margin-left:0">${this.escapeHtml(head)}</div>`
-                     + rows + problems;
-    },
-
-    runSelfTest() {
-        document.getElementById('selfTestResult').style.color = 'var(--text-secondary)';
-        document.getElementById('selfTestResult').textContent =
-            'проверяю… (микрофон включится на пару секунд)';
-        this.send('self_test');
-    },
-
-    onSelfTestResult(r) {
-        const el = document.getElementById('selfTestResult');
-        el.style.color = r.ok ? 'var(--success)' : 'var(--danger)';
-        el.textContent = r.message;
-        this.send('get_diagnostics');
-    },
-
-    copyDiagnostics() {
-        this.send('copy_diagnostics');
     },
 
     send(action, data) {
         const msg = Object.assign({ action }, data || {});
-        window.webkit.messageHandlers.bridge.postMessage(msg);
-    },
-
-    onData(response) {
-        switch (response.action) {
-            case 'history':
-                this.renderEntries(response.data, response.append);
-                break;
-            case 'stats':
-                this.renderStats(response.data);
-                break;
-            case 'settings':
-                this.applySettings(response.data);
-                if (response.version) {
-                    document.getElementById('appVersion').textContent = response.version;
-                }
-                if (response.staged_version) {
-                    this.onUpdateStatus({status: 'staged', detail: response.staged_version});
-                }
-                break;
-            case 'update_status':
-                this.onUpdateStatus(response);
-                break;
-            case 'permissions':
-                this.onPermissions(response);
-                break;
-            case 'diagnostics':
-                this.renderDiagnostics(response.data);
-                break;
-            case 'self_test_result':
-                this.onSelfTestResult(response);
-                break;
-            case 'deleted':
-                this.removeEntry(response.id);
-                this.send('get_stats');
-                break;
-            case 'copied':
-                this.showToast('Скопировано в буфер');
-                break;
-            case 'settings_saved':
-                this.showToast('Настройки сохранены');
-                break;
-            case 'settings_error':
-                this.showToast(response.message || 'Не удалось сохранить настройки');
-                break;
-            case 'test_api_result':
-                this.onTestApiResult(response);
-                break;
-            case 'test_groq_result':
-                this.onTestGroqResult(response);
-                break;
-            // Detail updates
-            case 'entry_updated':
-                this.onEntryUpdated(response.id, response.text);
-                break;
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bridge) {
+            window.webkit.messageHandlers.bridge.postMessage(msg);
         }
     },
 
-    // ─── Tab switching ───
+    onData(r) {
+        switch (r.action) {
+            case 'history': this.renderEntries(r.data, r.append); break;
+            case 'stats': break;   // shown natively, in the window subtitle
+            case 'settings':
+                this.applySettings(r.data);
+                if (r.version) document.getElementById('appVersion').textContent = r.version;
+                if (r.staged_version) this.onUpdateStatus({ status: 'staged', detail: r.staged_version });
+                break;
+            case 'update_status': this.onUpdateStatus(r); break;
+            case 'permissions': this.onPermissions(r); break;
+            case 'diagnostics': this.renderDiagnostics(r.data); break;
+            case 'self_test_result': this.onSelfTestResult(r); break;
+            case 'deleted':
+                this.removeEntry(r.id);
+                this.send('get_stats');
+                break;
+            case 'copied': this.showToast('Скопировано'); break;
+            case 'settings_saved': this.showToast('Сохранено'); break;
+            case 'settings_error': this.showToast(r.message || 'Не удалось сохранить настройки'); break;
+            case 'test_api_result': this.onTestResult('Api', r); break;
+            case 'test_groq_result': this.onTestResult('Groq', r); break;
+            case 'entry_updated': this.onEntryUpdated(r.id, r.text); break;
+            case 'entry_translation': this.onEntryTranslation(r); break;
+        }
+    },
+
+    onKey(e) {
+        const meta = e.metaKey || e.ctrlKey;
+        if (e.key === 'Escape' && this.detail) {
+            e.preventDefault();
+            this.closeDetail();
+        } else if (meta && e.code === 'KeyF') {
+            e.preventDefault();
+            this.send('focus_search');
+        } else if (meta && e.key === ',') {
+            e.preventDefault();
+            this.send('switch_tab', { tab: 'settings' });
+        } else if (meta && e.code === 'KeyS' && this.detail) {
+            e.preventDefault();
+            this.saveDetail();
+        }
+    },
+
+    // ─── Sections (the native toolbar switches them) ───
 
     switchTab(tab) {
         this.currentTab = tab;
-
-        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-        document.querySelector(`.tab[data-tab="${tab}"]`).classList.add('active');
-
-        // Hide all pages
-        document.getElementById('historyPage').classList.add('hidden');
-        document.getElementById('settingsPage').classList.remove('active');
-
-        // Search box is only meaningful on the history tab
-        const searchBox = document.getElementById('searchBox');
-        searchBox.style.display = (tab === 'history') ? '' : 'none';
-
+        document.getElementById('historyPage').classList.toggle('active', tab === 'history');
+        document.getElementById('settingsPage').classList.toggle('active', tab === 'settings');
         if (tab === 'settings') {
-            document.getElementById('settingsPage').classList.add('active');
-        } else {
-            document.getElementById('historyPage').classList.remove('hidden');
-            document.getElementById('searchInput').placeholder = 'Поиск по записям…';
+            this.send('get_permissions');
+            this.send('get_diagnostics');
         }
+        window.scrollTo(0, 0);
     },
 
-    // ─── History (unchanged) ───
+    // ─── History ───
 
-    renderStats(stats) {
-        document.getElementById('statTotal').textContent = stats.total;
-        document.getElementById('statToday').textContent = stats.today;
-        const sec = Math.round(stats.total_duration || 0);
-        const min = Math.floor(sec / 60);
-        const hrs = Math.floor(min / 60);
-        let label;
-        if (hrs > 0) label = hrs + ' ч ' + (min % 60) + ' мин';
-        else if (min > 0) label = min + ' мин';
-        else label = sec + ' сек';
-        document.getElementById('statDuration').textContent = label;
+    entryLang(entry) {
+        return entry.lang || this.guessLang(entry.text || '');
+    },
+
+    guessLang(text) {
+        let cyr = 0, lat = 0;
+        for (const ch of text.toLowerCase()) {
+            if ((ch >= 'а' && ch <= 'я') || 'ёіїєґ'.includes(ch)) cyr++;
+            else if (ch >= 'a' && ch <= 'z') lat++;
+        }
+        if (!cyr && !lat) return null;
+        if (cyr >= lat) return /[іїєґ]/i.test(text) ? 'uk' : 'ru';
+        return 'en';
     },
 
     renderEntries(data, append) {
         const list = document.getElementById('entriesList');
-
         if (!append) {
             this.entries = [];
+            this.byId.clear();
             this.offset = 0;
+            this.lastDayKey = null;
+            this.lastGroup = null;
             list.innerHTML = '';
         }
-
+        this.loading = false;
         this.entries = this.entries.concat(data);
         this.offset += data.length;
         this.hasMore = data.length >= this.PAGE_SIZE;
+        document.getElementById('loader').hidden = !this.hasMore;
 
-        if (this.entries.length === 0 && !append) {
-            list.innerHTML = '<div class="empty"><div class="empty-icon">🎙</div>' +
-                '<div class="empty-text">' +
-                (this.query ? 'Ничего не найдено' : 'Пока нет записей') +
-                '</div></div>';
+        if (this.entries.length === 0) {
+            list.innerHTML = `<div class="empty">${ICONS.mic}<div class="empty-title">${
+                this.query ? 'Ничего не найдено' : 'Пока нет записей'}</div><div>${
+                this.query ? 'Попробуй другое слово' : 'Зажми клавишу записи и говори — текст появится здесь'}</div></div>`;
             return;
         }
 
-        data.forEach(entry => {
-            list.appendChild(this.createEntryEl(entry));
-        });
-
-        const oldBtn = list.querySelector('.load-more');
-        if (oldBtn) oldBtn.remove();
-
-        if (this.hasMore) {
-            const btn = document.createElement('button');
-            btn.className = 'load-more';
-            btn.textContent = 'Загрузить ещё';
-            btn.onclick = () => this.loadMore();
-            list.appendChild(btn);
+        for (const entry of data) {
+            this.byId.set(entry.id, entry);
+            const key = this.dayKey(entry.timestamp);
+            if (key !== this.lastDayKey || !this.lastGroup) {
+                const day = document.createElement('div');
+                day.className = 'day';
+                day.innerHTML = `<div class="day-title">${this.dayTitle(entry.timestamp)}</div><div class="group"></div>`;
+                list.appendChild(day);
+                this.lastGroup = day.querySelector('.group');
+                this.lastDayKey = key;
+            }
+            this.lastGroup.appendChild(this.createEntryEl(entry));
         }
     },
 
@@ -1016,59 +955,310 @@ const app = {
         const el = document.createElement('div');
         el.className = 'entry';
         el.dataset.id = entry.id;
-
-        const durationStr = entry.duration_sec
-            ? Math.round(entry.duration_sec) + ' сек'
-            : '';
+        const lang = this.entryLang(entry);
+        const sec = Math.round(entry.duration_sec || 0);
+        const others = LANGS.filter(l => l !== lang);
 
         el.innerHTML =
-            '<div class="entry-content">' +
-                '<div class="entry-time">' + this.formatTime(entry.timestamp) + '</div>' +
-                '<div class="entry-text">' + this.escapeHtml(entry.text) + '</div>' +
-                (durationStr ? '<div class="entry-meta">' + durationStr + '</div>' : '') +
-            '</div>' +
-            '<button class="entry-delete" title="Удалить">&#x2715;</button>';
+            `<div class="entry-time">${this.clock(entry.timestamp)}</div>` +
+            `<div class="entry-body"><div class="entry-text">${this.highlight(entry.text)}</div></div>` +
+            `<div class="entry-side">` +
+                (sec ? `<span class="entry-meta">${sec} с</span>` : '') +
+                `<div class="entry-actions">` +
+                    `<button class="icon-btn" data-act="copy" title="Скопировать">${ICONS.copy}</button>` +
+                    others.map(l => `<button class="chip" data-act="lang" data-lang="${l}" data-key="${entry.id}:${l}" ` +
+                        `title="Скопировать ${IN_NAME[l]}">${BADGE[l]}</button>`).join('') +
+                    `<button class="icon-btn danger" data-act="delete" title="Удалить">${ICONS.trash}</button>` +
+                `</div>` +
+            `</div>`;
 
-        el.querySelector('.entry-content').addEventListener('click', () => {
-            this.openDetail(entry.id, entry.text, entry.timestamp, 'entry');
-        });
-
-        el.querySelector('.entry-delete').addEventListener('click', (e) => {
+        el.addEventListener('click', e => {
+            const btn = e.target.closest('[data-act]');
+            if (!btn) {
+                this.openDetail(entry.id);
+                return;
+            }
             e.stopPropagation();
-            this.send('delete', { id: entry.id });
+            const act = btn.dataset.act;
+            if (act === 'copy') this.send('copy_to_clipboard', { text: entry.text });
+            else if (act === 'delete') this.send('delete', { id: entry.id });
+            else if (act === 'lang') this.requestTranslation(entry.id, btn.dataset.lang, 'copy');
         });
-
         return el;
+    },
+
+    showRowTranslation(id, lang, text) {
+        const body = document.querySelector(`.entry[data-id="${id}"] .entry-body`);
+        if (!body) return;
+        let line = body.querySelector('.entry-translation');
+        if (!line) {
+            line = document.createElement('div');
+            line.className = 'entry-translation';
+            body.appendChild(line);
+        }
+        line.innerHTML = `<span class="chip solid">${BADGE[lang]}</span><span class="tr-text"></span>`;
+        line.querySelector('.tr-text').textContent = text;
     },
 
     removeEntry(id) {
         this.entries = this.entries.filter(e => e.id !== id);
-        const el = document.querySelector(`#entriesList .entry[data-id="${id}"]`);
-        if (el) {
-            el.style.opacity = '0';
-            el.style.transform = 'translateX(-20px)';
-            el.style.transition = 'all 0.25s';
-            setTimeout(() => el.remove(), 250);
+        this.byId.delete(id);
+        const el = document.querySelector(`.entry[data-id="${id}"]`);
+        if (!el) return;
+        const group = el.parentElement;
+        el.remove();
+        if (group && !group.children.length) {
+            const day = group.parentElement;
+            if (this.lastGroup === group) { this.lastGroup = null; this.lastDayKey = null; }
+            day.remove();
         }
     },
 
     loadMore() {
+        if (!this.hasMore || this.loading || !this.entries.length) return;
+        this.loading = true;
         const params = { limit: this.PAGE_SIZE, offset: this.offset };
-        if (this.query) {
-            this.send('search', Object.assign({ query: this.query }, params));
-        } else {
-            this.send('get_history', params);
+        if (this.query) this.send('search', Object.assign({ query: this.query }, params));
+        else this.send('get_history', params);
+    },
+
+    // Called from Python with the toolbar search field's text.
+    onSearch(value) {
+        this.query = (value || '').trim();
+        this.offset = 0;
+        this.loading = false;
+        if (this.query) this.send('search', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
+        else this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
+    },
+
+    // Called from Python when the window opens and after each dictation.
+    onNewEntry() {
+        this.send('get_stats');
+        this.onSearch(this.query);
+    },
+
+    // ─── Translation ───
+
+    requestTranslation(id, lang, purpose) {
+        const key = `${id}:${lang}`;
+        if (this.pending.has(key)) return;
+        this.pending.add(key);
+        document.querySelectorAll(`.chip[data-key="${key}"]`).forEach(c => c.classList.add('busy'));
+        this.send('translate_entry', { id, lang, purpose });
+    },
+
+    onEntryTranslation(r) {
+        const key = `${r.id}:${r.lang}`;
+        this.pending.delete(key);
+        document.querySelectorAll(`.chip[data-key="${key}"]`).forEach(c => c.classList.remove('busy'));
+        const entry = this.byId.get(r.id) || (this.detail && this.detail.entry.id === r.id ? this.detail.entry : null);
+        if (r.error) {
+            this.showToast('Перевести не получилось: ' + r.error);
+            if (this.detail && this.detail.entry.id === r.id && this.detail.lang === r.lang) {
+                this.renderDetailText('', 'Не получилось: ' + r.error);
+            }
+            return;
+        }
+        if (entry) {
+            entry._tr = entry._tr || {};
+            entry._tr[r.lang] = r.text;
+        }
+        if (r.purpose === 'copy') {
+            this.showToast(r.copied ? `${BADGE[r.lang]} — скопировано` : `${BADGE[r.lang]} — готово`);
+            this.showRowTranslation(r.id, r.lang, r.text);
+        }
+        if (this.detail && this.detail.entry.id === r.id && this.detail.lang === r.lang) {
+            this.renderDetailText(r.text);
         }
     },
 
-    onSearch(value) {
-        this.query = value.trim();
-        this.offset = 0;
-        if (this.query) {
-            this.send('search', { query: this.query, limit: this.PAGE_SIZE, offset: 0 });
-        } else {
-            this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
+    // ─── The sheet ───
+
+    openDetail(id) {
+        const entry = this.byId.get(id);
+        if (!entry) return;
+        const base = this.entryLang(entry) || 'ru';
+        this.detail = { entry, lang: base, base, original: entry.text, edited: entry.text };
+        const sec = Math.round(entry.duration_sec || 0);
+        document.getElementById('detailTime').textContent =
+            this.dayTitle(entry.timestamp) + ', ' + this.clock(entry.timestamp) + (sec ? ` · ${sec} с` : '');
+        document.getElementById('detailSaveBtn').classList.add('hidden');
+        this.renderLangSwitch();
+        this.selectDetailLang(base);
+        document.getElementById('sheet').classList.add('open');
+    },
+
+    renderLangSwitch() {
+        const d = this.detail;
+        const box = document.getElementById('detailLangs');
+        box.innerHTML = '';
+        for (const l of LANGS) {
+            const b = document.createElement('button');
+            b.innerHTML = BADGE[l] + (l === d.base ? '<span class="dot" title="Как вставлено"></span>' : '');
+            b.className = l === d.lang ? 'on' : '';
+            b.title = l === d.base ? 'Как вставлено' : 'Перевод ' + TO_NAME[l];
+            b.onclick = () => this.selectDetailLang(l);
+            box.appendChild(b);
         }
+    },
+
+    selectDetailLang(lang) {
+        const d = this.detail;
+        if (!d) return;
+        d.lang = lang;
+        this.renderLangSwitch();
+        const ta = document.getElementById('detailText');
+        const e = d.entry;
+        if (lang === d.base) {
+            ta.readOnly = false;
+            this.renderDetailText(d.edited, null, true);
+        } else if (e.source_lang === lang && e.source_text) {
+            this.renderDetailText(e.source_text, null, false, 'Так было сказано');
+        } else if (e._tr && e._tr[lang]) {
+            this.renderDetailText(e._tr[lang]);
+        } else {
+            this.renderDetailText('', 'Перевожу…');
+            this.requestTranslation(e.id, lang, 'view');
+        }
+    },
+
+    renderDetailText(text, placeholder, editable, note) {
+        const d = this.detail;
+        if (!d) return;
+        const ta = document.getElementById('detailText');
+        ta.readOnly = !editable;
+        ta.value = text || '';
+        ta.placeholder = placeholder || '';
+        ta.classList.toggle('loading', !!placeholder);
+        document.getElementById('detailCopyBtn').disabled = !text;
+        const isBase = d.lang === d.base;
+        document.getElementById('detailNote').textContent =
+            note || (isBase ? 'Как вставлено — можно править' : (text ? 'Перевод Claude' : ''));
+        document.getElementById('detailSaveBtn').classList.toggle(
+            'hidden', !(isBase && d.edited !== d.original));
+        requestAnimationFrame(() => {
+            ta.style.height = 'auto';
+            ta.style.height = Math.max(140, ta.scrollHeight) + 'px';
+            if (editable) ta.focus();
+        });
+    },
+
+    closeDetail() {
+        document.getElementById('sheet').classList.remove('open');
+        this.detail = null;
+    },
+
+    onDetailInput() {
+        const d = this.detail;
+        if (!d || d.lang !== d.base) return;
+        const ta = document.getElementById('detailText');
+        d.edited = ta.value;
+        ta.style.height = 'auto';
+        ta.style.height = Math.max(140, ta.scrollHeight) + 'px';
+        document.getElementById('detailSaveBtn').classList.toggle('hidden', d.edited === d.original);
+    },
+
+    copyDetail() {
+        const text = document.getElementById('detailText').value;
+        if (text) this.send('copy_to_clipboard', { text });
+    },
+
+    saveDetail() {
+        const d = this.detail;
+        if (!d || d.lang !== d.base) return;
+        const text = d.edited.trim();
+        if (!text || text === d.original) return;
+        this.send('update_entry', { id: d.entry.id, text });
+        d.original = d.edited = text;
+        document.getElementById('detailSaveBtn').classList.add('hidden');
+        this.showToast('Сохранено');
+    },
+
+    deleteDetail() {
+        const d = this.detail;
+        if (!d) return;
+        this.send('delete', { id: d.entry.id });
+        this.closeDetail();
+    },
+
+    onEntryUpdated(id, text) {
+        const entry = this.byId.get(id);
+        if (entry) {
+            entry.text = text;
+            entry._tr = {};   // the server dropped the cached translations too
+        }
+        const el = document.querySelector(`.entry[data-id="${id}"] .entry-text`);
+        if (el) el.innerHTML = this.highlight(text);
+        const tr = document.querySelector(`.entry[data-id="${id}"] .entry-translation`);
+        if (tr) tr.remove();
+    },
+
+    // ─── Settings ───
+
+    applySettings(s) {
+        const set = (id, v) => { document.getElementById(id).value = v; };
+        set('settingLanguage', s.language || 'ru');
+        set('settingHotkeyMode', s.hotkey_mode || 'hold');
+        set('settingHotkeyKeycode', String(s.hotkey_keycode ?? 61));
+        this.shortcuts.translate.key = (s.translate_hotkey_key ?? 2);
+        this.shortcuts.translate.mods = (s.translate_hotkey_mods ?? 524288);
+        this.shortcuts.screenshot.key = (s.screenshot_hotkey_key ?? 21);
+        this.shortcuts.screenshot.mods = (s.screenshot_hotkey_mods ?? 1179648);
+        this.renderShortcuts();
+        document.getElementById('settingScreenshotEnabled').checked = s.screenshot_enabled !== false;
+        set('settingTranslateTarget', s.translate_target || 'ru');
+        set('settingTranslateModel', s.translate_model || 'claude-sonnet-5');
+        set('settingMaxRecording', String(s.max_recording_seconds || 300));
+        // Legacy settings.json may still hold "local" — that mode is gone.
+        set('settingTranscriptionMode', s.transcription_mode === 'api' ? 'api' : 'groq');
+        set('settingApiKey', s.openai_api_key || '');
+        set('settingApiModel', s.openai_model || 'gpt-4o-mini-transcribe');
+        set('settingGroqKey', s.groq_api_key || '');
+        set('settingGroqModel', s.groq_model || 'whisper-large-v3-turbo');
+        set('settingAnthropicKey', s.anthropic_api_key || '');
+        // Backward compat: old cleanup_enabled boolean → "light" mode if true.
+        set('settingCleanupMode', s.cleanup_mode || (s.cleanup_enabled ? 'light' : 'off'));
+        set('settingTargetLanguage', s.target_language || '');
+        document.getElementById('settingAutoUpdate').checked = s.auto_update !== false;
+        this.onTranscriptionModeChange();
+    },
+
+    collectSettings() {
+        const val = id => document.getElementById(id).value;
+        return {
+            language: val('settingLanguage'),
+            hotkey_mode: val('settingHotkeyMode'),
+            hotkey_keycode: parseInt(val('settingHotkeyKeycode'), 10) || 61,
+            translate_hotkey_key: this.shortcuts.translate.key,
+            translate_hotkey_mods: this.shortcuts.translate.mods,
+            screenshot_enabled: document.getElementById('settingScreenshotEnabled').checked,
+            screenshot_hotkey_key: this.shortcuts.screenshot.key,
+            screenshot_hotkey_mods: this.shortcuts.screenshot.mods,
+            translate_target: val('settingTranslateTarget'),
+            translate_model: val('settingTranslateModel'),
+            max_recording_seconds: parseInt(val('settingMaxRecording'), 10) || 300,
+            transcription_mode: val('settingTranscriptionMode'),
+            openai_api_key: val('settingApiKey'),
+            openai_model: val('settingApiModel'),
+            groq_api_key: val('settingGroqKey'),
+            groq_model: val('settingGroqModel'),
+            anthropic_api_key: val('settingAnthropicKey'),
+            cleanup_mode: val('settingCleanupMode'),
+            target_language: val('settingTargetLanguage'),
+            auto_update: document.getElementById('settingAutoUpdate').checked,
+        };
+    },
+
+    // Settings apply as you change them, the way macOS does it.
+    saveSettings() {
+        this.send('save_settings', this.collectSettings());
+    },
+
+    onTranscriptionModeChange() {
+        const mode = document.getElementById('settingTranscriptionMode').value;
+        document.querySelectorAll('[data-mode]').forEach(row => {
+            row.classList.toggle('hidden', row.dataset.mode !== mode);
+        });
     },
 
     // ─── Shortcut recorder ───
@@ -1132,17 +1322,18 @@ const app = {
         btn.classList.add('recording');
         btn.textContent = 'Нажми сочетание…';
 
-        const finish = () => {
+        const finish = (changed) => {
             this._recording = false;
             btn.classList.remove('recording');
             document.removeEventListener('keydown', onKey, true);
             this.renderShortcuts();
+            if (changed) this.saveSettings();
         };
 
         const onKey = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            if (e.key === 'Escape') return finish();
+            if (e.key === 'Escape') return finish(false);
 
             const code = this.KEYCODES[e.code];
             if (code === undefined) return;   // modifier alone, keep waiting
@@ -1153,75 +1344,16 @@ const app = {
             if (e.shiftKey) mods |= 131072;
             if (e.metaKey) mods |= 1048576;
             if (!mods) {
-                btn.textContent = 'Нужен модификатор ⌘⌥⌃⇧';
+                btn.textContent = 'Нужен ⌘ ⌥ ⌃ или ⇧';
                 return;
             }
 
             sc.key = code;
             sc.mods = mods;
-            finish();
+            finish(true);
         };
 
         document.addEventListener('keydown', onKey, true);
-    },
-
-    // ─── Settings ───
-
-    applySettings(s) {
-        document.getElementById('settingLanguage').value = s.language || 'ru';
-        document.getElementById('settingHotkeyMode').value = s.hotkey_mode || 'hold';
-        document.getElementById('settingHotkeyKeycode').value = String(s.hotkey_keycode ?? 61);
-        this.shortcuts.translate.key = (s.translate_hotkey_key ?? 2);
-        this.shortcuts.translate.mods = (s.translate_hotkey_mods ?? 524288);
-        this.shortcuts.screenshot.key = (s.screenshot_hotkey_key ?? 21);
-        this.shortcuts.screenshot.mods = (s.screenshot_hotkey_mods ?? 1179648);
-        this.renderShortcuts();
-        document.getElementById('settingScreenshotEnabled').value =
-            (s.screenshot_enabled === false) ? '0' : '1';
-        document.getElementById('settingTranslateTarget').value = s.translate_target || 'ru';
-        document.getElementById('settingTranslateModel').value = s.translate_model || 'claude-sonnet-5';
-        document.getElementById('settingMaxRecording').value = s.max_recording_seconds || 300;
-        // Legacy settings.json may still hold "local" — that mode is gone.
-        const tmode = s.transcription_mode === 'api' ? 'api' : 'groq';
-        document.getElementById('settingTranscriptionMode').value = tmode;
-        document.getElementById('settingApiKey').value = s.openai_api_key || '';
-        document.getElementById('settingApiModel').value = s.openai_model || 'gpt-4o-mini-transcribe';
-        document.getElementById('settingGroqKey').value = s.groq_api_key || '';
-        document.getElementById('settingGroqModel').value = s.groq_model || 'whisper-large-v3-turbo';
-        document.getElementById('settingAnthropicKey').value = s.anthropic_api_key || '';
-        // Backward compat: old cleanup_enabled boolean → "light" mode if true.
-        const mode = s.cleanup_mode || (s.cleanup_enabled ? 'light' : 'off');
-        document.getElementById('settingCleanupMode').value = mode;
-        document.getElementById('settingTargetLanguage').value = s.target_language || '';
-        document.getElementById('settingAutoUpdate').value = (s.auto_update === false) ? '0' : '1';
-        this.onTranscriptionModeChange();
-    },
-
-    saveSettings() {
-        const shortKc = parseInt(document.getElementById('settingHotkeyKeycode').value) || 61;
-        const s = {
-            language: document.getElementById('settingLanguage').value,
-            hotkey_mode: document.getElementById('settingHotkeyMode').value,
-            hotkey_keycode: shortKc,
-            translate_hotkey_key: this.shortcuts.translate.key,
-            translate_hotkey_mods: this.shortcuts.translate.mods,
-            screenshot_enabled: document.getElementById('settingScreenshotEnabled').value === '1',
-            screenshot_hotkey_key: this.shortcuts.screenshot.key,
-            screenshot_hotkey_mods: this.shortcuts.screenshot.mods,
-            translate_target: document.getElementById('settingTranslateTarget').value,
-            translate_model: document.getElementById('settingTranslateModel').value,
-            max_recording_seconds: parseInt(document.getElementById('settingMaxRecording').value) || 300,
-            transcription_mode: document.getElementById('settingTranscriptionMode').value,
-            openai_api_key: document.getElementById('settingApiKey').value,
-            openai_model: document.getElementById('settingApiModel').value,
-            groq_api_key: document.getElementById('settingGroqKey').value,
-            groq_model: document.getElementById('settingGroqModel').value,
-            anthropic_api_key: document.getElementById('settingAnthropicKey').value,
-            cleanup_mode: document.getElementById('settingCleanupMode').value,
-            target_language: document.getElementById('settingTargetLanguage').value,
-            auto_update: document.getElementById('settingAutoUpdate').value === '1',
-        };
-        this.send('save_settings', s);
     },
 
     requestAccessibility() {
@@ -1232,12 +1364,13 @@ const app = {
     onPermissions(r) {
         const el = document.getElementById('axStatus');
         const btn = document.getElementById('axBtn');
-        if (!el) return;
         if (r.accessibility) {
-            el.textContent = 'разрешено';
+            el.textContent = 'разрешена';
+            el.className = 'result status-ok';
             btn.style.display = 'none';
         } else {
-            el.textContent = 'не разрешено';
+            el.textContent = 'не разрешена';
+            el.className = 'result status-bad';
             btn.style.display = '';
         }
     },
@@ -1255,7 +1388,7 @@ const app = {
             clearTimeout(this._installTimer);
             this._installTimer = setTimeout(() => {
                 btn.disabled = false;
-                result.style.color = 'var(--danger)';
+                result.style.color = 'var(--red)';
                 result.textContent = 'Перезапуск не произошёл. Закрой AudioLog '
                     + 'через меню и открой снова — обновление уже загружено и '
                     + 'применится при следующем запуске.';
@@ -1263,6 +1396,7 @@ const app = {
             return;
         }
         btn.disabled = true;
+        result.style.color = '';
         result.textContent = 'Проверяю…';
         this.send('check_updates');
     },
@@ -1271,16 +1405,13 @@ const app = {
         const btn = document.getElementById('checkUpdateBtn');
         const result = document.getElementById('updateResult');
         btn.disabled = false;
-        btn.style.background = '';
-        btn.style.color = '';
+        btn.classList.remove('primary');
         result.style.color = '';
         if (r.status === 'staged') {
             btn.dataset.mode = 'install';
             btn.textContent = '↻ Перезапустить и обновить до ' + r.detail;
-            // Make it look like the action it is — this is the one button
-            // that finishes the update.
-            btn.style.background = 'var(--accent)';
-            btn.style.color = '#fff';
+            // The one button that finishes the update — make it look like it.
+            btn.classList.add('primary');
             result.textContent = 'Обновление загружено и проверено';
         } else if (r.status === 'current') {
             btn.dataset.mode = '';
@@ -1289,139 +1420,74 @@ const app = {
         } else {
             btn.dataset.mode = '';
             btn.textContent = 'Проверить обновления';
-            result.style.color = 'var(--danger)';
+            result.style.color = 'var(--red)';
             result.textContent = r.detail || 'Не удалось проверить обновления';
         }
     },
 
-    onTranscriptionModeChange() {
-        const mode = document.getElementById('settingTranscriptionMode').value;
-        document.getElementById('apiSettings').style.display = mode === 'api' ? '' : 'none';
-        document.getElementById('groqSettings').style.display = mode === 'groq' ? '' : 'none';
-    },
+    testApi() { this.testKey('Api', 'settingApiKey', 'settingApiModel', 'test_api'); },
+    testGroq() { this.testKey('Groq', 'settingGroqKey', 'settingGroqModel', 'test_groq'); },
 
-    testApi() {
-        const btn = document.getElementById('testApiBtn');
-        const result = document.getElementById('testApiResult');
-        const key = document.getElementById('settingApiKey').value;
-        const model = document.getElementById('settingApiModel').value;
-
+    testKey(kind, keyId, modelId, action) {
+        const btn = document.getElementById(`test${kind}Btn`);
+        const result = document.getElementById(`test${kind}Result`);
+        const key = document.getElementById(keyId).value;
         if (!key) {
-            result.textContent = 'Введите API ключ';
-            result.style.color = 'var(--danger)';
+            result.textContent = 'нет ключа';
+            result.className = 'result status-bad';
             return;
         }
-
         btn.disabled = true;
-        btn.textContent = 'Проверка…';
-        result.textContent = '';
-
-        this.send('test_api', { api_key: key, model: model });
+        result.textContent = 'проверяю…';
+        result.className = 'result';
+        this.send(action, { api_key: key, model: document.getElementById(modelId).value });
     },
 
-    onTestApiResult(response) {
-        const btn = document.getElementById('testApiBtn');
-        const result = document.getElementById('testApiResult');
+    onTestResult(kind, r) {
+        const btn = document.getElementById(`test${kind}Btn`);
+        const result = document.getElementById(`test${kind}Result`);
         btn.disabled = false;
-        btn.textContent = 'Тест подключения';
-
-        if (response.success) {
-            result.textContent = 'Подключение успешно';
-            result.style.color = '#30d158';
+        if (r.success) {
+            result.textContent = 'работает';
+            result.className = 'result status-ok';
         } else {
-            result.textContent = response.error || 'Ошибка подключения';
-            result.style.color = 'var(--danger)';
+            result.textContent = r.error || 'ошибка подключения';
+            result.className = 'result status-bad';
         }
     },
 
-    testGroq() {
-        const btn = document.getElementById('testGroqBtn');
-        const result = document.getElementById('testGroqResult');
-        const key = document.getElementById('settingGroqKey').value;
-        const model = document.getElementById('settingGroqModel').value;
+    // ─── Diagnostics ───
 
-        if (!key) {
-            result.textContent = 'Введите API ключ';
-            result.style.color = 'var(--danger)';
-            return;
-        }
-
-        btn.disabled = true;
-        btn.textContent = 'Проверка…';
-        result.textContent = '';
-
-        this.send('test_groq', { api_key: key, model: model });
+    renderDiagnostics(d) {
+        const el = document.getElementById('diagList');
+        if (!el || !d) return;
+        const head = `AudioLog ${d.version} · macOS ${d.macos} · ${d.arch} · перевод ${d.shortcut}`
+            + (d.screenshot_shortcut ? ` · скриншот ${d.screenshot_shortcut}` : '');
+        const rows = d.checks.map(c => {
+            const fix = (!c.ok && c.fix) ? `<div class="diag-fix">${this.escapeHtml(c.fix)}</div>` : '';
+            return `<div class="diag-row ${c.ok ? 'diag-ok' : 'diag-bad'}"><span class="diag-mark">${c.ok ? '✓' : '✕'}</span>`
+                 + `<span><span class="diag-name">${this.escapeHtml(c.name)}</span> — ${this.escapeHtml(c.detail)}</span></div>${fix}`;
+        }).join('');
+        const problems = d.problems && d.problems.length
+            ? `<div class="diag-problems">${this.escapeHtml(d.problems.join('\n'))}</div>` : '';
+        el.innerHTML = `<div class="diag-head">${this.escapeHtml(head)}</div>` + rows + problems;
     },
 
-    onTestGroqResult(response) {
-        const btn = document.getElementById('testGroqBtn');
-        const result = document.getElementById('testGroqResult');
-        btn.disabled = false;
-        btn.textContent = 'Тест подключения';
-
-        if (response.success) {
-            result.textContent = 'Подключение успешно';
-            result.style.color = '#30d158';
-        } else {
-            result.textContent = response.error || 'Ошибка подключения';
-            result.style.color = 'var(--danger)';
-        }
+    runSelfTest() {
+        const el = document.getElementById('selfTestResult');
+        el.style.color = '';
+        el.textContent = 'Проверяю… микрофон включится на пару секунд';
+        this.send('self_test');
     },
 
-    // ─── Detail modal ───
-
-    openDetail(id, text, timestamp, type) {
-        this.detailItem = { id, text, type };
-        this.detailOriginal = text;
-        document.getElementById('detailTime').textContent = this.formatTime(timestamp);
-        const ta = document.getElementById('detailText');
-        ta.value = text;
-        ta.style.height = 'auto';
-        document.getElementById('detailSaveBtn').classList.remove('visible');
-        document.getElementById('detailOverlay').classList.add('open');
-        setTimeout(() => {
-            ta.style.height = ta.scrollHeight + 'px';
-            ta.focus();
-        }, 50);
+    onSelfTestResult(r) {
+        const el = document.getElementById('selfTestResult');
+        el.style.color = r.ok ? 'var(--green)' : 'var(--red)';
+        el.textContent = r.message;
+        this.send('get_diagnostics');
     },
 
-    closeDetail() {
-        document.getElementById('detailOverlay').classList.remove('open');
-        this.detailItem = null;
-    },
-
-    onDetailInput() {
-        const ta = document.getElementById('detailText');
-        ta.style.height = 'auto';
-        ta.style.height = ta.scrollHeight + 'px';
-        const changed = ta.value !== this.detailOriginal;
-        document.getElementById('detailSaveBtn').classList.toggle('visible', changed);
-    },
-
-    copyDetail() {
-        const text = document.getElementById('detailText').value;
-        this.send('copy_to_clipboard', { text });
-    },
-
-    saveDetail() {
-        if (!this.detailItem) return;
-        const text = document.getElementById('detailText').value.trim();
-        if (!text) return;
-        const { id, type } = this.detailItem;
-        if (type === 'entry') {
-            this.send('update_entry', { id, text });
-        }
-        this.detailOriginal = text;
-        document.getElementById('detailSaveBtn').classList.remove('visible');
-        this.showToast('Сохранено');
-    },
-
-    onEntryUpdated(id, text) {
-        const entry = this.entries.find(e => e.id === id);
-        if (entry) entry.text = text;
-        const el = document.querySelector(`#entriesList .entry[data-id="${id}"] .entry-text`);
-        if (el) el.textContent = text;
-    },
+    copyDiagnostics() { this.send('copy_diagnostics'); },
 
     // ─── Utilities ───
 
@@ -1430,44 +1496,56 @@ const app = {
         toast.textContent = text;
         toast.classList.add('show');
         clearTimeout(this._toastTimer);
-        this._toastTimer = setTimeout(() => toast.classList.remove('show'), 2000);
+        this._toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
     },
 
-    formatTime(ts) {
-        if (!ts) return '';
-        const d = new Date(ts.replace(' ', 'T'));
+    parseTs(ts) { return new Date(String(ts || '').replace(' ', 'T')); },
+
+    dayKey(ts) { return this.parseTs(ts).toDateString(); },
+
+    dayTitle(ts) {
+        const d = this.parseTs(ts);
         const now = new Date();
-        const isToday = d.toDateString() === now.toDateString();
-        const time = d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
-        if (isToday) return 'Сегодня, ' + time;
-        const yesterday = new Date(now);
-        yesterday.setDate(yesterday.getDate() - 1);
-        if (d.toDateString() === yesterday.toDateString()) return 'Вчера, ' + time;
-        return d.toLocaleDateString('ru', { day: 'numeric', month: 'short' }) + ', ' + time;
+        const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+        const days = Math.round((startOf(now) - startOf(d)) / 86400000);
+        if (days === 0) return 'Сегодня';
+        if (days === 1) return 'Вчера';
+        const date = d.toLocaleDateString('ru', {
+            day: 'numeric', month: 'long',
+            year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+        });
+        if (days > 1 && days < 7) {
+            const wd = d.toLocaleDateString('ru', { weekday: 'long' });
+            return wd.charAt(0).toUpperCase() + wd.slice(1) + ', ' + date;
+        }
+        return date;
+    },
+
+    clock(ts) {
+        return this.parseTs(ts).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
     },
 
     escapeHtml(s) {
         const div = document.createElement('div');
-        div.textContent = s;
+        div.textContent = s == null ? '' : String(s);
         return div.innerHTML;
     },
 
-    debounce(fn, ms) {
-        let timer;
-        return function(...args) {
-            clearTimeout(timer);
-            timer = setTimeout(() => fn.apply(this, args), ms);
-        };
+    // Entry text with the search words marked. Matched on the raw text and
+    // escaped piece by piece, so a query can never cut through an entity.
+    highlight(text) {
+        const raw = text == null ? '' : String(text);
+        const q = this.query.toLowerCase();
+        if (!q) return this.escapeHtml(raw);
+        const low = raw.toLowerCase();
+        let out = '', i = 0, j;
+        while ((j = low.indexOf(q, i)) >= 0) {
+            out += this.escapeHtml(raw.slice(i, j))
+                 + '<mark>' + this.escapeHtml(raw.slice(j, j + q.length)) + '</mark>';
+            i = j + q.length;
+        }
+        return out + this.escapeHtml(raw.slice(i));
     },
-
-    // Called from Python when new transcription is saved
-    onNewEntry() {
-        this.query = '';
-        this.offset = 0;
-        document.getElementById('searchInput').value = '';
-        this.send('get_stats');
-        this.send('get_history', { limit: this.PAGE_SIZE, offset: 0 });
-    }
 };
 
 document.addEventListener('DOMContentLoaded', () => app.init());

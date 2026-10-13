@@ -40,6 +40,10 @@ OPTIONS = {
         'updater',
         'screenshot',
         'system_hotkeys',
+        'translate_popup',
+        'diagnostics',
+        'languages',
+        'menu_icons',
     ],
     'plist': {
         'CFBundleIdentifier': 'com.audiolog.app',

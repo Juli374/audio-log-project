@@ -9,11 +9,13 @@ import rumps
 from PyObjCTools import AppHelper
 
 import db
+import languages
+import menu_icons
 from config import Config
 from feedback import Feedback
 from history_ui import HistoryWindow
 from hotkey import HotkeyListener
-from output import paste_text
+from output import copy_text, paste_text
 from overlay import Overlay
 from recorder import Recorder
 from screenshot import ScreenshotEditor
@@ -35,10 +37,34 @@ ICON_IDLE = "idle"
 ICON_RECORDING = "recording"
 ICON_TRANSCRIBING = "processing"
 
+# The status line at the top of the menu: an SF Symbol per state.
+_STATUS_SYMBOLS = {
+    "starting": "hourglass",
+    "ready": "mic",
+    "recording": "record.circle",
+    "processing": "hourglass",
+    "done": "checkmark.circle",
+    "error": "exclamationmark.triangle",
+}
+
+# Switching the language this soon after a dictation reads as "that one came
+# out in the wrong language": the dictation is handed over again in the new
+# language, on the clipboard and on screen. Later than this, a switch is just
+# a switch — it only affects what comes next.
+_RELANG_WINDOW = 90.0
+
 
 def _icon_file(state: str) -> str:
     from utils import resource_path
     return str(resource_path() / "assets" / "menubar" / f"{state}.png")
+
+
+def _set_image(item: rumps.MenuItem, image) -> None:
+    """Put an NSImage on a rumps menu item (rumps itself only takes files)."""
+    try:
+        item._menuitem.setImage_(image)
+    except Exception:
+        log.exception("could not set a menu item image")
 
 
 class MenuBarApp(rumps.App):
@@ -68,20 +94,36 @@ class MenuBarApp(rumps.App):
         self._watchdog_stop = threading.Event()
         self._hide_timer: threading.Timer | None = None
         self._ready = False
+        self._icon_state = ICON_IDLE
+        # (monotonic time, entry dict) of the last dictation — what a
+        # language switch right after it hands over again.
+        self._last_dictation: tuple[float, dict] | None = None
 
         db.init_db()
 
         self._hotkey: HotkeyListener | None = None
 
-        self._status_item = rumps.MenuItem("⏳ Запуск…")
+        self._status_item = rumps.MenuItem("Запуск…")
         self._status_item.set_callback(None)
-        self._lang_ru = rumps.MenuItem(
-            "🇷🇺 Русский", callback=self._select_ru)
-        self._lang_en = rumps.MenuItem(
-            "🇺🇸 English (перевод)", callback=self._select_en)
-        self._lang_uk = rumps.MenuItem(
-            "🇺🇦 Українська (переклад)", callback=self._select_uk)
+        self._set_status("starting", "Запуск…")
+        self._lang_ru = rumps.MenuItem("Русский", callback=self._select_ru)
+        self._lang_en = rumps.MenuItem("English — перевод",
+                                       callback=self._select_en)
+        self._lang_uk = rumps.MenuItem("Українська — переклад",
+                                       callback=self._select_uk)
+        for code, item in (("ru", self._lang_ru), ("en", self._lang_en),
+                           ("uk", self._lang_uk)):
+            _set_image(item, menu_icons.language_badge(languages.BADGE[code]))
         self._update_lang_checks()
+        self._translate_item = rumps.MenuItem(
+            "Перевести выделенное", callback=self._translate_menu)
+        _set_image(self._translate_item, menu_icons.symbol("translate"))
+        self._screenshot_item = rumps.MenuItem(
+            "Скриншот с пометками", callback=self._screenshot_menu)
+        _set_image(self._screenshot_item, menu_icons.symbol("camera.viewfinder"))
+        history_item = rumps.MenuItem("История…", callback=self._show_history)
+        _set_image(history_item, menu_icons.symbol("clock.arrow.circlepath"))
+        self._refresh_menu_shortcuts()
         self._updater: Updater | None = None
         self.menu = [
             self._status_item,
@@ -90,35 +132,58 @@ class MenuBarApp(rumps.App):
             self._lang_en,
             self._lang_uk,
             None,
-            rumps.MenuItem("🌐 Перевести выделенное",
-                           callback=self._translate_menu),
-            rumps.MenuItem("📸 Скриншот с пометками",
-                           callback=self._screenshot_menu),
+            self._translate_item,
+            self._screenshot_item,
             None,
-            rumps.MenuItem("📋 История", callback=self._show_history),
+            history_item,
             None,
-            rumps.MenuItem("Выход", callback=self._quit),
+            rumps.MenuItem("Выйти из AudioLog", callback=self._quit),
         ]
 
     def set_icon(self, state: str, title: str = "") -> None:
         """Swap the menu bar image, plus optional text beside it.
 
-        rumps keeps template mode across icon changes, so the glyph stays
-        tinted by the system for the current menu bar appearance.
+        While dictation is translated the glyph carries the target
+        language's tag, so the mode is visible without opening the menu.
+        The image is a template: macOS tints it for the menu bar.
         """
+        self._icon_state = state
         try:
-            self.icon = _icon_file(state)
+            self._icon = _icon_file(state)
+            self._icon_nsimage = menu_icons.status_icon(
+                _icon_file(state), self._menu_bar_badge())
+            nsapp = getattr(self, "_nsapp", None)
+            if nsapp is not None:
+                nsapp.setStatusBarIcon()
         except Exception:
             log.exception("could not set menu bar icon %r", state)
         self.title = title
 
+    def _menu_bar_badge(self) -> str | None:
+        """The language tag for the menu bar — only while translating."""
+        out = languages.output_language(self._config)
+        if out == (self._config.language or "ru"):
+            return None
+        return languages.BADGE.get(out, out.upper())
+
+    def _set_status(self, kind: str, text: str) -> None:
+        """The status line at the top of the menu. Main thread."""
+        self._status_item.title = text
+        _set_image(self._status_item,
+                   menu_icons.symbol(_STATUS_SYMBOLS.get(kind, "mic")))
+
     def _set_state(self, icon: str, status: str,
                    overlay_text: str | None = None,
-                   overlay_state: str = "record") -> None:
+                   overlay_state: str = "record",
+                   kind: str | None = None) -> None:
         """Thread-safe UI update — dispatches to main thread."""
+        if kind is None:
+            kind = {ICON_RECORDING: "recording",
+                    ICON_TRANSCRIBING: "processing"}.get(icon, "ready")
+
         def _update():
             self.set_icon(icon)
-            self._status_item.title = status
+            self._set_status(kind, status)
             if overlay_text:
                 self._overlay.show(overlay_text, state=overlay_state)
             else:
@@ -140,14 +205,9 @@ class MenuBarApp(rumps.App):
         self._is_recording = True
         self._cancel_auto_hide()  # prevent previous timer from hiding new overlay
         self.set_icon(ICON_RECORDING)
-        tgt = (self._config.target_language or "").lower()
-        if tgt == "en":
-            rec_label = "Запись… → EN"
-        elif tgt == "uk":
-            rec_label = "Запись… → UK"
-        else:
-            rec_label = "Запись…"
-        self._status_item.title = f"🔴 {rec_label}"
+        badge = self._menu_bar_badge()
+        rec_label = f"Запись… → {badge}" if badge else "Запись…"
+        self._set_status("recording", rec_label)
         self._overlay.show(rec_label, state="record")
 
         # Set recording_start_time early so watchdog has a valid baseline
@@ -168,7 +228,8 @@ class MenuBarApp(rumps.App):
                 if self._hotkey:
                     self._hotkey.reset_toggle()
                 AppKit.NSBeep()
-                self._set_state(ICON_IDLE, "❌ Ошибка записи", "Ошибка", "error")
+                self._set_state(ICON_IDLE, "Ошибка записи", "Ошибка", "error",
+                                kind="error")
                 self._auto_hide_overlay(delay=5.0)
                 # "Recording failed" in the menu bar tells the user nothing
                 # actionable. Say which cause it is, in a window they can read.
@@ -218,7 +279,7 @@ class MenuBarApp(rumps.App):
         # UI updates — best effort via main thread
         def _update_ui():
             self.set_icon(ICON_IDLE)
-            self._status_item.title = "⚠️ Запись остановлена (таймаут)"
+            self._set_status("error", "Запись остановлена по таймауту")
             self._overlay.show("Таймаут!", state="error")
             self._auto_hide_overlay()
 
@@ -257,7 +318,7 @@ class MenuBarApp(rumps.App):
         self._feedback.on_record_stop()
 
         self.set_icon(ICON_TRANSCRIBING)
-        self._status_item.title = "⏳ Обработка…"
+        self._set_status("processing", "Обработка…")
         self._overlay.show("Обработка…", state="process")
 
         # Stop recorder and process in background — don't block main thread.
@@ -269,7 +330,7 @@ class MenuBarApp(rumps.App):
                 self._is_processing = False
                 self._set_state(ICON_IDLE, "Готов к записи")
                 return
-            self._set_state(ICON_TRANSCRIBING, "⏳ Распознавание…",
+            self._set_state(ICON_TRANSCRIBING, "Распознавание…",
                             "Распознавание…", "process")
             self._process(audio)
 
@@ -285,32 +346,48 @@ class MenuBarApp(rumps.App):
                     log.exception("Transcription failed")
                     self._feedback.on_error()
                     AppKit.NSBeep()
-                    self._set_state(ICON_IDLE, "❌ Ошибка распознавания",
-                                    "Ошибка", "error")
+                    self._set_state(ICON_IDLE, "Ошибка распознавания",
+                                    "Ошибка", "error", kind="error")
                     self._auto_hide_overlay(delay=5.0)
                     return
 
                 if not text:
                     self._set_state(ICON_IDLE, "Готов к записи")
                     return
+                # Which language that came out in, and what was said when
+                # it is a translation — read while the lock still holds.
+                entry = {
+                    "id": None,
+                    "text": text,
+                    "lang": getattr(self._transcriber, "last_lang", None),
+                    "source_text": getattr(self._transcriber,
+                                           "last_source_text", None),
+                    "source_lang": getattr(self._transcriber,
+                                           "last_source_lang", None),
+                }
 
             # Paste OUTSIDE the lock — paste_text can take up to 5s
             try:
                 paste_text(text)
             except Exception:
                 log.exception("Paste failed (text saved to DB and clipboard)")
+            self._last_dictation = (time.monotonic(), entry)
 
             # Save to DB in background — don't block the pipeline
             dur = self._recorder.last_duration
             rms = self._recorder.last_rms
             peak = self._recorder.last_peak
-            threading.Thread(
-                target=lambda: (db.save(text, dur, rms, peak),
-                                self._history_window.notify_new_entry()),
-                daemon=True,
-            ).start()
-            self._set_state(ICON_IDLE, f"✅ {text[:40]}…",
-                            "Вставлено!", "done")
+
+            def _save():
+                entry["id"] = db.save(
+                    text, dur, rms, peak, lang=entry["lang"],
+                    source_text=entry["source_text"],
+                    source_lang=entry["source_lang"])
+                self._history_window.notify_new_entry()
+            threading.Thread(target=_save, daemon=True).start()
+            short = text if len(text) <= 40 else text[:40] + "…"
+            self._set_state(ICON_IDLE, f"Вставлено: {short}",
+                            "Вставлено!", "done", kind="done")
             self._auto_hide_overlay()
         finally:
             self._is_processing = False
@@ -371,6 +448,7 @@ class MenuBarApp(rumps.App):
         self._lang_ru.state = tgt == ""
         self._lang_en.state = tgt == "en"
         self._lang_uk.state = tgt == "uk"
+        self.set_icon(self._icon_state)   # the menu bar tag follows the mode
 
     def _set_target(self, target: str) -> None:
         if (self._config.target_language or "") == target:
@@ -385,6 +463,73 @@ class MenuBarApp(rumps.App):
         except Exception:
             log.exception("Failed to persist target_language")
         log.info("Target language switched to %r", target or "none")
+        self._history_window.notify_settings_changed()
+        self._relang_last()
+
+    def _relang_last(self) -> None:
+        """Hand the last dictation over again in the language just picked.
+
+        For "I forgot it was set to English": dictate, see English appear,
+        pick Русский in the menu — and the same dictation in Russian is on
+        the clipboard, shown on screen, ready for ⌘V. Instant when it was
+        spoken in Russian (the original is kept), one Claude call otherwise.
+        """
+        last = self._last_dictation
+        if last is None or self._is_recording or self._is_processing:
+            return
+        at, entry = last
+        if time.monotonic() - at > _RELANG_WINDOW:
+            return
+        want = languages.output_language(self._config)
+        if languages.entry_language(entry) == want:
+            return
+        threading.Thread(target=self._relang_worker, args=(entry, want),
+                         daemon=True, name="relang").start()
+
+    def _relang_worker(self, entry: dict, want: str) -> None:
+        popup = self._translator._popup
+        where = languages.IN_NAME.get(want, want)
+        ready = languages.ready_text(entry, want)
+        if not ready:
+            AppHelper.callAfter(popup.show, entry["text"],
+                                f"Перевожу последнюю запись {where}…")
+        try:
+            text = ready or languages.convert(entry, want, self._config)
+        except Exception as e:
+            log.exception("Could not re-deliver the last dictation in %s", want)
+            AppHelper.callAfter(popup.show, f"Перевести не получилось: {e}",
+                                "Последняя запись")
+            return
+
+        def _deliver():
+            copy_text(text)
+            popup.show(text, f"Последняя запись {where} — уже в буфере, "
+                             f"вставь ⌘V  ·  Esc — закрыть")
+        AppHelper.callAfter(_deliver)
+        log.info("Last dictation handed over again in %s (%d chars, %s)",
+                 want, len(text), "ready" if ready else "translated")
+
+    def _refresh_menu_shortcuts(self) -> None:
+        """Show the translate and screenshot shortcuts beside their items."""
+        for item, key, mods, enabled in (
+            (self._translate_item, self._config.translate_hotkey_key,
+             self._config.translate_hotkey_mods,
+             getattr(self._config, "translate_enabled", True)),
+            (self._screenshot_item, self._config.screenshot_hotkey_key,
+             self._config.screenshot_hotkey_mods,
+             getattr(self._config, "screenshot_enabled", True)),
+        ):
+            char = menu_icons.key_equivalent(key) if enabled else ""
+            try:
+                item._menuitem.setKeyEquivalent_(char)
+                item._menuitem.setKeyEquivalentModifierMask_(mods if char else 0)
+            except Exception:
+                log.exception("could not show a menu shortcut")
+
+    def _on_settings_saved(self) -> None:
+        """Settings changed in the window: bring the menu up to date."""
+        self._update_lang_checks()
+        self._refresh_menu_shortcuts()
 
     def _select_ru(self, _) -> None:
         self._set_target("")
@@ -700,6 +845,7 @@ class MenuBarApp(rumps.App):
         self._history_window._updater = self._updater
         self._history_window._install_update_cb = self._install_update
         self._history_window._rebuild_transcriber_cb = self._rebuild_transcriber
+        self._history_window._settings_saved_cb = self._on_settings_saved
         self._updater.start()
 
         threading.Thread(target=self._setup_status_item, daemon=True).start()

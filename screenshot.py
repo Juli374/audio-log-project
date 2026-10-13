@@ -24,6 +24,7 @@ import struct
 import subprocess
 import tempfile
 import threading
+import zlib
 
 import objc
 import AppKit
@@ -89,23 +90,48 @@ def png_scale(png: bytes) -> float:
     return 1.0
 
 
-def stamp_scale(png: bytes, scale: float) -> bytes:
-    """Re-encode `png` so its DPI metadata matches `scale` (1.0 = 72 dpi).
+def _png_chunk(kind: bytes, body: bytes) -> bytes:
+    return (struct.pack(">I", len(body)) + kind + body
+            + struct.pack(">I", zlib.crc32(kind + body) & 0xFFFFFFFF))
 
-    The canvas in the editor produces a bare PNG; this gives the annotated
-    result the same physical size the original shot had.
+
+def stamp_scale(png: bytes, scale: float) -> bytes:
+    """Give `png` the DPI metadata for `scale` (1.0 = 72 dpi), pixels untouched.
+
+    The canvas in the editor produces a PNG without a pHYs chunk; this gives
+    the annotated result the same physical size the original shot had.
+
+    Done on the bytes on purpose: only the pHYs chunk changes. Decoding and
+    re-encoding through NSBitmapImageRep looked equivalent but was not —
+    AppKit swaps the canvas's sRGB chunk for gAMA 2.2, the reciprocal of
+    the right value. Apps that honour gAMA (Chrome, Slack, the Claude app,
+    anything built on Chromium) then showed the marked-up shot washed out;
+    native apps ignore the chunk, which is why it only looked broken
+    "sometimes".
     """
-    if scale <= 1.0:
+    if scale <= 1.0 or png[:8] != _PNG_SIGNATURE:
         return png
-    data = Foundation.NSData.dataWithBytes_length_(png, len(png))
-    rep = AppKit.NSBitmapImageRep.imageRepWithData_(data)
-    if rep is None:
-        return png
-    rep.setSize_(Foundation.NSMakeSize(rep.pixelsWide() / scale,
-                                       rep.pixelsHigh() / scale))
-    out = rep.representationUsingType_properties_(
-        AppKit.NSBitmapImageFileTypePNG, {})
-    return bytes(out) if out is not None else png
+    per_metre = int(round(72.0 * scale / 0.0254))
+    phys = _png_chunk(b"pHYs", struct.pack(">IIB", per_metre, per_metre, 1))
+
+    out = [png[:8]]
+    pos = 8
+    placed = False
+    while pos + 12 <= len(png):
+        length = struct.unpack(">I", png[pos:pos + 4])[0]
+        kind = png[pos + 4:pos + 8]
+        end = pos + 12 + length
+        if end > len(png):
+            return png   # truncated — leave it as it came
+        if kind == b"IDAT" and not placed:
+            out.append(phys)   # pHYs has to come before the image data
+            placed = True
+        if kind != b"pHYs":
+            out.append(png[pos:end])
+        pos = end
+        if kind == b"IEND":
+            break
+    return b"".join(out) if placed else png
 
 
 def copy_png_to_clipboard(png: bytes) -> bool:

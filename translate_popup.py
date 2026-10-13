@@ -23,12 +23,19 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from AppKit import (
+    NSAttributedString,
     NSBackingStoreBuffered,
     NSColor,
     NSEvent,
     NSFont,
+    NSFontAttributeName,
+    NSFontWeightMedium,
+    NSForegroundColorAttributeName,
     NSMakeRect,
+    NSMutableAttributedString,
+    NSMutableParagraphStyle,
     NSPanel,
+    NSParagraphStyleAttributeName,
     NSPasteboard,
     NSPasteboardTypeString,
     NSScreen,
@@ -78,6 +85,7 @@ _MAX_HEIGHT_RATIO = 0.62  # of visible screen height
 _PADDING = 22
 _CORNER_RADIUS = 14
 _FONT_SIZE = 15.0
+_CAPTION_SIZE = 12.0
 
 # Clipboard round-trip: how long we wait for the frontmost app to answer ⌘C.
 # Apps differ wildly — a native text field answers in ~20ms, Google Docs
@@ -312,7 +320,8 @@ def _cache_put(text: str, target: str, model: str, result: str) -> None:
             _cache.popitem(last=False)
 
 
-def _build_request(text: str, target: str, config, stream: bool):
+def _build_request(text: str, target: str, config, stream: bool,
+                   system: str | None = None):
     api_key = config.anthropic_api_key
     if not api_key:
         raise RuntimeError("Не задан ключ Anthropic")
@@ -326,7 +335,7 @@ def _build_request(text: str, target: str, config, stream: bool):
         # the model skips re-reading them and starts answering sooner.
         "system": [{
             "type": "text",
-            "text": _document_prompt(target),
+            "text": system or _document_prompt(target),
             "cache_control": {"type": "ephemeral"},
         }],
         "messages": [{"role": "user", "content": text}],
@@ -473,6 +482,35 @@ def translate_text(text: str, target: str, config, on_partial=None) -> str:
     return joined
 
 
+def translate_dictation(text: str, target: str, config) -> str:
+    """Translate one dictation — for the history window and language switches.
+
+    Speech, not a document: this uses the dictation prompt from
+    transcriber.py, so the result reads the way the dictation would have
+    come out had it been made in `target` to begin with. The model is the
+    one picked for translation in Settings.
+    """
+    model = getattr(config, "translate_model", _DEFAULT_MODEL)
+    key = "dictation:" + target
+    cached = _cache_get(text, key, model)
+    if cached is not None:
+        return cached
+
+    t0 = time.monotonic()
+    request = _build_request(text, target, config, stream=False,
+                             system=transcriber._translate_system_prompt(target))
+    with _open_with_retry(request, _API_TIMEOUT) as response:
+        data = json.loads(response.read().decode())
+    out = "".join(b.get("text", "") for b in data.get("content", [])
+                  if b.get("type") == "text").strip()
+    if not out:
+        raise RuntimeError("Claude вернул пустой ответ")
+    log.info("Dictation → %s: %d chars in %.1fs",
+             target, len(text), time.monotonic() - t0)
+    _cache_put(text, key, model, out)
+    return out
+
+
 # ── Panel ──
 
 
@@ -577,14 +615,34 @@ class TranslatePopup:
 
     # -- public API (main thread only) --
 
-    def show(self, text: str) -> None:
-        """Show the panel with `text`, resizing and recentring to fit."""
+    def show(self, text: str, caption: str | None = None) -> None:
+        """Show the panel with `text`, resizing and recentring to fit.
+
+        `caption` is a short grey line above the text — what it is and what
+        to do with it ("in the clipboard: ⌘V").
+        """
         if self._panel is None:
             self._build()
 
-        self._text_view.setString_(text)
-        self._text_view.setFont_(NSFont.systemFontOfSize_(_FONT_SIZE))
-        self._text_view.setTextColor_(NSColor.labelColor())
+        content = NSMutableAttributedString.alloc().init()
+        if caption:
+            spacing = NSMutableParagraphStyle.alloc().init()
+            spacing.setParagraphSpacing_(8.0)
+            content.appendAttributedString_(
+                NSAttributedString.alloc().initWithString_attributes_(
+                    caption + "\n", {
+                        NSFontAttributeName: NSFont.systemFontOfSize_weight_(
+                            _CAPTION_SIZE, NSFontWeightMedium),
+                        NSForegroundColorAttributeName:
+                            NSColor.secondaryLabelColor(),
+                        NSParagraphStyleAttributeName: spacing,
+                    }))
+        content.appendAttributedString_(
+            NSAttributedString.alloc().initWithString_attributes_(text, {
+                NSFontAttributeName: NSFont.systemFontOfSize_(_FONT_SIZE),
+                NSForegroundColorAttributeName: NSColor.labelColor(),
+            }))
+        self._text_view.textStorage().setAttributedString_(content)
 
         height = self._fit_height(text)
         self._recentre(height)

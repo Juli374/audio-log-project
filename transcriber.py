@@ -80,6 +80,12 @@ _TRANSCRIPTION_TIMEOUT = 30  # seconds
 class BaseTranscriber:
     def __init__(self, config: Config) -> None:
         self._config = config
+        # What the last transcribe() produced, for the history: the language
+        # of the returned text and — when that is a translation — what was
+        # actually said. Read under the caller's transcription lock.
+        self.last_lang: str | None = None
+        self.last_source_text: str | None = None
+        self.last_source_lang: str | None = None
 
     def load_model(self) -> None:
         raise NotImplementedError
@@ -101,6 +107,9 @@ class BaseTranscriber:
         transcript is first sent to Claude for punctuation/capitalization
         cleanup (strict prompt — does not change content).
         """
+        spoken = self._config.language
+        self.last_lang = spoken
+        self.last_source_text = self.last_source_lang = None
         text = self._transcribe_raw(audio)
         if _is_hallucination(text):
             log.warning("Filtered Whisper hallucination: %.80s", text)
@@ -124,7 +133,7 @@ class BaseTranscriber:
                     log.info("Cleanup BEFORE (%s): %s", mode, raw)
                     log.info("Cleanup AFTER  (%s): %s", mode, text)
         target = (self._config.target_language or "").strip().lower()
-        if not target or target == self._config.language:
+        if not target or target == spoken:
             return text
         try:
             translated = _translate_via_claude(text, target, self._config)
@@ -133,6 +142,8 @@ class BaseTranscriber:
                         exc_info=True)
             return text
         log.info("Translated → %s: %.80s…", target, translated)
+        self.last_lang = target
+        self.last_source_text, self.last_source_lang = text, spoken
         return translated
 
 
